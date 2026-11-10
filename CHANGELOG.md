@@ -36,6 +36,7 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 - **A new README.** It opens with what CUI is in plain words, says what it is not (it draws its own components and does not wrap the system's), compares it with the libraries people know, and lists the limitations in full, including the eight components that still need a pointer. It also says how the code is written and what tests it.
 - A component page lists only its own functions, and no longer repeats its option names in a sentence above the options table.
 - Release notes link to the files they mention with full addresses, so the links work from the release page.
+- **The Lua console example is an editor.** [`examples/repl.c`](examples/repl.c) is now a 40-line editable field with a Run button under it and the console below; the count slider, the "Written from the app" label and the "a card drawn from Lua" demo card are gone. Given a file on the command line (`repl some.lua`) the code loads into the field and runs at once, and can be edited and Run again. The README gained a "Lua examples" section on running the scripts in `examples/lua/` with it.
 
 ### Fixed
 

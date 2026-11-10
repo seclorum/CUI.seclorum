@@ -1,11 +1,13 @@
-/* The Lua console driving the UI: the slider, the label and the theme are all
- * shared with the script, in both directions.
+/* The Lua console driving the UI.
  *
  *     count = count + 1
- *     set_label("hello from Lua")
  *     toast("3 times count is " .. count * 3)
  *     dark(true)
- *     for i = 1, 5 do count = count + 1 end
+ *
+ * The app is an editor: a 40-line field, a Run button under it that runs
+ * whatever it holds, and the console below. Passing a .lua file on the command
+ * line ("repl some.lua") loads its code into the field and runs it at once, so
+ * it can be edited and Run again to see the results.
  */
 #include <cui/cui.h>
 #include <cui/cui_app.h>
@@ -15,14 +17,8 @@
 
 typedef struct { cui_script *lua; cui_ctx *ui; bool dark; } rp_app;
 
-static char label[256] = "Written from the app";
-
-static int set_label_fn(void *ud, const char *const *args, int n, char *out, size_t cap) {
-    (void)ud;
-    if (n < 1) { snprintf(out, cap, "usage: set_label(text)"); return 1; }
-    snprintf(label, sizeof label, "%s", args[0]);
-    return 0;
-}
+#define SNIPPET_LINES 40                                    /* the run field shows 40 lines */
+static char snippet[8192] = "print('hello from the run button')";
 
 static int toast_fn(void *ud, const char *const *args, int n, char *out, size_t cap) {
     (void)out; (void)cap;
@@ -49,40 +45,39 @@ static void frame(cui_ctx *ui, void *user) {
         cui_column(ui, .pad = 20, .gap = 12, .width = CUI_FILL) {
             cui_row(ui, .gap = 12, .align = CUI_ALIGN_CENTER) {
                 cui_heading(ui, "Lua console", 3);
-                cui_muted(ui, "the widgets above are shared with the script");
-            }
-            cui_row(ui, .gap = 16, .align = CUI_ALIGN_CENTER) {
-                float cnt = (float)cui_script_get_number(a->lua, "count");
-                if (cui_slider(ui, "count", &cnt, 0, 100, .show_value = false))
-                    cui_script_set_number(a->lua, "count", cnt);
-                cui_text(ui, label, .font = CUI_FONT_MEDIUM);
+                cui_muted(ui, "edit and press Run, or type in the console");
                 if (cui_switch(ui, "Dark", &a->dark)) cui_set_theme(ui, a->dark ? CUI_THEME_DARK : CUI_THEME_LIGHT);
             }
+            cui_textarea(ui, "snippet", snippet, sizeof snippet, .width = CUI_FILL, .height = SNIPPET_LINES * 18, .placeholder = "lua to run");
+            if (cui_button(ui, "Run", .icon = CUI_ICON_PLAY, .variant = CUI_BUTTON_PRIMARY))
+                cui_script_eval(a->lua, snippet);
             cui_script_widget(ui, "panel", a->lua, "panel");
             cui_repl(ui, "console", a->lua, .width = CUI_FILL, .height = 300, .autofocus = true);
         }
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     static rp_app a;
     a.lua = cui_script_new();
     if (a.lua) {
-        cui_script_set_fn(a.lua, "set_label", set_label_fn, NULL);
         cui_script_set_fn(a.lua, "toast", toast_fn, &a);
         cui_script_set_fn(a.lua, "dark", dark_fn, &a);
         cui_script_set_number(a.lua, "count", 0);
-        cui_script_eval(a.lua,
-            "function panel(ui, self)\n"
-            "  ui.card({ gap = 8 }, function()\n"
-            "    ui.label('a card drawn from Lua')\n"
-            "    ui.text('count is shared with the slider above: ' .. count)\n"
-            "    if ui.button('+1') then count = count + 1 end\n"
-            "    self.who = ui.textfield('who', self.who or 'who to greet?')\n"
-            "    if ui.button('greet', { variant = 'primary' }) then toast('hello, ' .. self.who) end\n"
-            "  end)\n"
-            "end");
-        cui_script_printf(a.lua, "\x1b[2mtry: count = count + 1   set_label(\"hi\")   toast(\"hello\")   dark(true)\x1b[0m\n");
+        /* the script slot stays empty until a file or the console registers a
+         * widget with widget(f); this empty fallback keeps it from reporting
+         * a missing function in the meantime */
+        cui_script_eval(a.lua, "function panel(ui, self) end");
+        cui_script_printf(a.lua, "\x1b[2mtry: count = count + 1   toast(\"hello\")   dark(true)\x1b[0m\n");
+        if (argc > 1) {                                        /* repl some.lua: put its code in the field and run it */
+            FILE *f = fopen(argv[1], "rb");
+            if (f) {
+                size_t n = fread(snippet, 1, sizeof snippet - 1, f);
+                snippet[n] = 0;
+                fclose(f);
+                cui_script_eval(a.lua, snippet);
+            } else fprintf(stderr, "repl: cannot read %s\n", argv[1]);
+        }
     }
     int r = cui_app_run(&(cui_app_desc){ .title = "Lua console", .width = 720, .height = 560 }, frame, &a);
     cui_script_free(a.lua);
