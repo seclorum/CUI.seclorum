@@ -18,7 +18,8 @@
 typedef struct { cui_script *lua; cui_ctx *ui; bool dark; } rp_app;
 
 #define SNIPPET_LINES 40                                    /* the run field shows 40 lines */
-static char snippet[8192] = "print('hello from the run button')";
+#define SNIPPET_CAP 131072                                  /* scripts up to 128 KiB fit */
+static char snippet[SNIPPET_CAP] = "print('hello from the run button')";
 
 static int toast_fn(void *ud, const char *const *args, int n, char *out, size_t cap) {
     (void)out; (void)cap;

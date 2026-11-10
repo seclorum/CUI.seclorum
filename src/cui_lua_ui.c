@@ -357,6 +357,76 @@ static int lw_l_toast(lua_State *L) {
     return 1;
 }
 
+/* ---- charts: series as {name, values, color} tables over the public chart ---- */
+
+static const lw_fld fld_chart[] = {
+    { "width", offsetof(cui_chart_opts, width), F_SIZE }, { "height", offsetof(cui_chart_opts, height), F_FLOAT },
+    { "area", offsetof(cui_chart_opts, area), F_BOOL }, { "no_grid", offsetof(cui_chart_opts, no_grid), F_BOOL },
+    { "no_legend", offsetof(cui_chart_opts, no_legend), F_BOOL }, { "smooth", offsetof(cui_chart_opts, smooth), F_BOOL },
+    { "format", offsetof(cui_chart_opts, format), F_STR }, { "min", offsetof(cui_chart_opts, min), F_FLOAT },
+    { "max", offsetof(cui_chart_opts, max), F_FLOAT }, { NULL }
+};
+
+#define LW_CHART_MAX 8                                          /* series per chart */
+#define LW_CHART_LABELS 64                                      /* x-axis labels */
+
+static cui_color lw_color_of(lua_State *L, int idx) {
+    float c[4] = { 0.5f, 0.5f, 0.5f, 1 };
+    for (int ch = 1; ch <= 4; ch++) {
+        lua_geti(L, idx, ch);
+        if (!lua_isnil(L, -1)) c[ch - 1] = (float)luaL_checknumber(L, -1);
+        lua_pop(L, 1);
+    }
+    return (cui_color){ (uint8_t)(255 * cui__clampf(c[0], 0, 1) + 0.5f), (uint8_t)(255 * cui__clampf(c[1], 0, 1) + 0.5f),
+                        (uint8_t)(255 * cui__clampf(c[2], 0, 1) + 0.5f), (uint8_t)(255 * cui__clampf(c[3], 0, 1) + 0.5f) };
+}
+
+static int lw_l_line_chart(lua_State *L) {
+    cui_ctx *ui = lw_take(L);
+    const char *id = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    int n = (int)luaL_len(L, 2);
+    luaL_argcheck(L, n <= LW_CHART_MAX, 2, "too many series");
+    cui_series s[LW_CHART_MAX];
+    for (int k = 0; k < n; k++) {
+        memset(&s[k], 0, sizeof s[k]);
+        lua_geti(L, 2, k + 1);
+        luaL_checktype(L, -1, LUA_TTABLE);
+        lua_getfield(L, -1, "name");
+        s[k].name = lua_isnil(L, -1) ? NULL : luaL_checkstring(L, -1);      /* lives while the table is on the stack */
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "values");
+        luaL_checktype(L, -1, LUA_TTABLE);
+        int m = (int)luaL_len(L, -1);
+        float *v = cui__frame_alloc(ui, sizeof(float) * (size_t)(m > 0 ? m : 1));   /* the chart copies it at build */
+        for (int j = 1; j <= m; j++) { lua_geti(L, -1, j); v[j - 1] = (float)luaL_checknumber(L, -1); lua_pop(L, 1); }
+        s[k].values = v; s[k].count = m;
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "color");
+        if (lua_istable(L, -1)) s[k].color = lw_color_of(L, lua_gettop(L));
+        lua_pop(L, 2);                                                      /* color (maybe) and the series table */
+    }
+    LW_OPTS(cui_chart_opts, o, 3, fld_chart);
+    if (!lua_isnoneornil(L, 3)) {                                           /* labels: an array of strings in the opts */
+        lua_getfield(L, 3, "labels");
+        if (lua_istable(L, -1)) {
+            int nl = (int)luaL_len(L, -1);
+            luaL_argcheck(L, nl <= LW_CHART_LABELS, 3, "too many labels");
+            static const char *labels[LW_CHART_LABELS];
+            for (int j = 1; j <= nl; j++) {
+                lua_geti(L, -1, j);
+                labels[j - 1] = luaL_checkstring(L, -1);
+                lua_pop(L, 1);
+            }
+            o.labels = labels; o.label_count = nl;
+            o_p = &o;
+        }
+        lua_pop(L, 1);
+    }
+    cui_line_chart_ex(ui, id, s, n, o_p);
+    return 0;
+}
+
 /* ---- install: the raw table plus the Lua bootstrap that adds the closures ---- */
 
 static const luaL_Reg lw_raw[] = {
@@ -372,6 +442,7 @@ static const luaL_Reg lw_raw[] = {
     { "progress", lw_l_progress }, { "button", lw_l_button }, { "checkbox", lw_l_checkbox },
     { "switch", lw_l_switch }, { "slider", lw_l_slider }, { "rating", lw_l_rating },
     { "textfield", lw_l_textfield }, { "textarea", lw_l_textarea }, { "toast", lw_l_toast },
+    { "line_chart", lw_l_line_chart },
     { NULL, NULL }
 };
 
@@ -381,7 +452,7 @@ static const char *const lw_boot =
     "local raw = __cui\n"
     "for _, n in ipairs{ 'text', 'heading', 'muted', 'label', 'secondary', 'code', 'kbd', 'icon',"
     " 'separator', 'spacer', 'gap', 'badge', 'progress', 'button', 'checkbox', 'switch',"
-    " 'slider', 'rating', 'textfield', 'textarea', 'toast' } do ui[n] = raw[n] end\n"
+    " 'slider', 'rating', 'textfield', 'textarea', 'toast', 'line_chart' } do ui[n] = raw[n] end\n"
     "for _, n in ipairs{ 'row_begin', 'row_end', 'column_begin', 'column_end', 'box_begin', 'box_end',"
     " 'card_begin', 'card_end', 'scroll_begin', 'scroll_end' } do ui[n] = raw[n] end\n"
     "local function scoped(b, e)\n"
