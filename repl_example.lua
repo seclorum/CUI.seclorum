@@ -1,7 +1,7 @@
 -- Paste into the Lua console of examples/repl or the gallery's Developer tools
--- page. widget(f) hands the function to whichever slot the app calls, so the
--- demo above the console is replaced wherever it lives. widget(nil) restores
--- the app's own card.
+-- page. The TODO card inserts itself at the end of the running card stack: the
+-- wrapper first calls the app's own function for this slot (_G[__cui_slot]),
+-- then draws its own card after it. widget(nil) restores the plain app card.
 local say = note or toast or function() end        -- note() in the gallery, toast() in repl
 
 local function graph(ui, self)
@@ -89,4 +89,8 @@ local function graph(ui, self)
   end)
 end
 
-widget(graph)
+widget(function(ui, self)
+  local app_card = _G[__cui_slot]                  -- the app's original function for this slot
+  if app_card then app_card(ui, self) end          -- the card stack the app already runs
+  graph(ui, self)                                  -- our card joins it at the end
+end)

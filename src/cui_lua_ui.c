@@ -458,6 +458,8 @@ void cui_script_widget(cui_ctx *ui, const char *id_str, cui_script *s, const cha
         lua_settop(L, 0);
         goto done;
     }
+    lua_pushstring(L, fn);                   /* the script can call _G[__cui_slot] to wrap the app's own */
+    lua_setglobal(L, "__cui_slot");
     lua_getglobal(L, "ui");
     lua_pushvalue(L, self_idx);              /* the call is fn(ui, self) */
 

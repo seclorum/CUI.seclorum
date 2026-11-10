@@ -7074,6 +7074,13 @@ static void test_lua_widget(void) {
     CHECK(cui_script_get_number(s, "count") == 100);                /* stats runs again, same self */
     cui_script_eval(s, "widget(3)");
     CHECK(rp_has(s, "wants a function"));
+
+    /* a swapped function can wrap the app's own through _G[__cui_slot] */
+    cui_script_eval(s, "function stats(ui, self) count = (count or 0) + 1 end");
+    cui_script_eval(s, "count = 0");
+    cui_script_eval(s, "widget(function(ui, self) local f = _G[__cui_slot] if f == stats then f(ui, self) end end)");
+    run(ui, build_lw, &c, 2);
+    CHECK(cui_script_get_number(s, "count") == 2);   /* the app's function ran via the wrapper */
 #else
     printf("lua widgets: skipped (built without CUI_LUA)\n");
 #endif
