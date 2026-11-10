@@ -9,6 +9,69 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 - **Lua console** (`cui_repl`, `cui_script`): a script console for letting the user drive your app. A colored output pane over a Lua-highlighted editor: Enter runs the text when the compiler says the chunk is complete (so functions span lines), `=expr` prints its value even when nil, Up and Down walk the history, Ctrl+Enter runs whatever is there and Ctrl+L clears the pane. `print()`, results and errors land in the pane. State crosses both ways with `cui_script_set_number`/`get_number` and friends, `cui_script_set_fn` exposes an app function taking and returning strings, and `cui_script_lua` hands out the `lua_State`. Built with `CUI_LUA=ON`, which vendors Lua 5.4 (MIT); the console renders a note without it. The pane keeps the standard libraries except `io` and `require`, and `os` loses `execute`, `exit` and friends. The syntax highlighter learned `lua`. See [More components](docs/components-more.md#lua-console), the gallery's *Developer tools* page and [`examples/repl.c`](examples/repl.c).
 
 - **Script widgets** (`cui_script_widget`): a Lua function called once a frame through a curated `ui.*` table, so the user composes real components from the console — cards, buttons, switches, sliders, text fields and a dozen more are one `ui.` call away. `self` survives between frames per widget instance; a Lua error or a begin without its end unwinds the node tree and draws its message in red instead of corrupting the frame. Needs `CUI_LUA=ON`, like the console. See [More components](docs/components-more.md#lua-console) and the gallery's *Developer tools* page.
+- **Instruments**, five components for interfaces that read like an instrument: values as dots, labels in the monospaced font, hairlines and one accent. See [Instruments](docs/components-more.md#instruments) and the gallery's new *Instruments* page.
+  - **Dot-matrix chart** (`cui_dot_chart`): values as a grid of dots, lit up to each column's value and dim above it. Series stack, an accent series stands out, the pointer or the arrow keys show a readout, and a click returns where it landed.
+  - **Chart annotations** (`cui_chart_annotation`): vertical lines, dashed thresholds and labelled points over the dot chart, the line chart and the bar chart. Labels that would overlap move to the other side of their line, then down.
+  - **Event track** (`cui_event_track`): moments on a time axis as dots you drag, add with a click and remove with a double-click, snapped to a step, with full keyboard control. It lines up with a dot chart above it.
+  - **Readout** (`cui_readout`): a label, a value with its unit on the value's baseline, and a line of context.
+  - **Dot-matrix display** (`cui_dot_display`): text in a 5 by 7 dot font that shrinks to fit or scrolls.
+  - In a right-to-left interface the readout and the display's placement follow the reading direction, the chart and the track keep time running left to right, and Persian or Arabic labels are shaped with `CUI_TEXT_SHAPING`.
+- `cui_axis_units`: `CUI_AXIS_HOURS` labels an axis as times of day, with 30 reading 06:00 the next morning.
+- **Caffeine**, a new example ([`examples/caffeine.c`](examples/caffeine.c)) that puts the instruments on one screen: how much caffeine is still in you at bedtime, with cups you drag. It runs on the site and ships in the release downloads.
+- **Three new guides.** [Building an app](docs/apps.md) covers the window, when frames happen, what components return, work on other threads and shipping. [Recipes](docs/recipes.md) has six complete programs: a form that validates, a table sorted by its headers, a list with a detail pane, a long task on another thread, a clock, and settings that are remembered. [Questions](docs/faq.md) says what CUI is and is not, how it compares with other libraries, and what it cannot do.
+- **A function reference.** The site has a page that lists every public function of `cui.h`, `cui_app.h` and `cui_render.h` (496 of them) under the headers' own sections: its signature, the comment written beside it, and a link to the component page or guide that explains it. It has a filter, and site search finds a function by name.
+- **Complete programs on component pages.** A page's usage block is a fragment. 71 of the 147 pages now also have the example as a whole program, with its includes, a frame function and `main`, under "Complete program". The site build compiles each one and leaves out any that does not build.
+- `cui_app_quit`, `cui_app_set_title`, `cui_app_set_size`, `cui_app_size`, `cui_app_ui`, `cui_app_is_software` and `cui_app_native_window` take `NULL` for the app that is running, as `cui_app_file_dialog` already did. A `cui_app_run` callback had no way to close its window or change its title: now it is `cui_app_quit(NULL)`.
+- `tests/doc_programs.sh`, run on every push: it builds every complete program in the docs with warnings as errors.
+
+### Changed
+
+- **Every component has a description.** Each section of the component docs now opens with one sentence that says what the component is and what it is for. The site shows it under the page title, on the cards that link to the page and in search results, where it used to show whatever sentence came first ("Weeks start on Monday." for the date picker).
+- **Site search reads the whole site.** It now searches the text of the guides, the options and struct fields of every component and the changelog, and shows the words around a match. It used to look at titles and summaries only, so "install", "find_package" or the name of an option found nothing.
+- **Every page has its own address for search engines.** The site was one page as far as a search engine could tell, so nobody searching for "C date picker" could land on the date picker. The build now writes a page per component and per guide (`c/date-picker-and-calendar/`, `guide/tutorial/`) with its text, title and description, plus `sitemap.xml` and `robots.txt`. Opened in a browser, such a page becomes the live site at that page.
+- **Links to the site show a preview.** Every page carries a title, a description and an image for the cards that chat apps and social sites draw; a component's card shows the component.
+- The site shows the version it documents beside the name.
+- **Fuller component pages.** Sections that showed a snippet and a sentence now say what the call returns and when, which variables are yours and what the library writes into them, and the limits people run into, each checked against the code.
+- **Every option is described.** All 1,277 fields of the options and data structs on the component pages now have a description: comments added in `cui.h` for the 395 that had none (checked against the code), and a shared description for fields that mean the same everywhere, such as `width` or `disabled`. A field whose type is an enum lists its values.
+- **A new README.** It opens with what CUI is in plain words, says what it is not (it draws its own components and does not wrap the system's), compares it with the libraries people know, and lists the limitations in full, including the eight components that still need a pointer. It also says how the code is written and what tests it.
+- A component page lists only its own functions, and no longer repeats its option names in a sentence above the options table.
+- Release notes link to the files they mention with full addresses, so the links work from the release page.
+
+### Fixed
+
+- The values of an enum on a component page's "Data and results" section showed as `[object HTMLElement]` (17 pages).
+- Eight component pages said things their component does not do: the icon button's icon swap (it animates on `cui_button`, not on `cui_icon_button`), a tooltip placed after a badge, a hover card on an avatar, Tab inside the time picker and the color picker, and the keys of the onboarding checklist, comments and JSON viewer. The pages now say what the code does, and the README lists the time picker and color picker among the parts that still need a pointer.
+
+## 2026-11-09 · 1.3.1: first steps, a tutorial and ready-to-run examples
+
+A release for people starting out. Every step of the getting-started guide was followed as written, and what did not work is fixed.
+
+### Added
+
+- **Tutorial**: [build a to-do app](docs/tutorial.md) in about 130 lines, step by step: your data as the state, a list that grows, ids for repeated rows, a filter, a dialog and saving to a file. The finished app is `examples/todo.c`, and a test types into it and checks that it does what the tutorial says.
+- **Ready-to-run examples**: each release now attaches the example apps built for Windows, macOS and Linux, so you can try them without a compiler.
+- `cui_app_target(my_app)` for CMake projects. It gives a window app no console on Windows and keeps `int main(void)` as the entry point, and in release builds it links only the library code the app calls. A first window is about 250 KB with it and about 470 KB without.
+- **Component pages on the site list their data.** Under the options, each page now shows the structs you fill in and the structs you get back, with their fields and the values of their enums (105 tables on 63 pages).
+- **Every component page says what the keyboard does.** 119 pages list their keys, 20 are marked as display only, and 8 say plainly that they still need a pointer: the rating, the histogram slider's handles, swipe actions, the reorderable list, the JSON viewer, the agent plan's steps, blame and the time histogram.
+- [From C++](docs/integration.md#from-c): how to call CUI from C++, with an example the tests compile.
+- `tests/first_steps.sh`, run on every push: it takes the code and the commands out of the getting-started guide and runs them, without CMake, as one file, with CMake and from an installed copy.
+
+### Changed
+
+- **Metric cards** put the change under the value when the card is too narrow for both, instead of cutting both short.
+- The install snippets name a release (`GIT_TAG v1.3.1`), so a build does not change under you.
+- The docs say what "native" means here: compiled code with no browser or runtime, drawing its own components. They also say how to get the small sizes they quote.
+
+### Fixed
+
+- An installed CUI could not be used through `find_package(cui)`: the package did not look for the thread library it links.
+- The getting-started guide's "Without CMake" command left out `src/platform/cui_dialogs.c` and did not link.
+- With the single-file distribution, the guide's first window did not compile: it needs `#include "cui.h"`, which the guide now says. The guide's one-line build also gave a 1.6 MB program; it now shows the two commands that give about 265 KB.
+- The Windows link line in the guide and in `cui.pc` lacked `comdlg32` and `ole32`.
+
+## 2026-11-09 · 1.3: developer tools
+
+### Added
 
 - **Developer tools**, ten components for the tools developers build. Each works at phone width and in a right-to-left interface, builds or draws only what is in view, and allocates only when its data changes. See [Developer tools](docs/components-more.md#developer-tools) and the gallery's new *Developer tools* page.
   - **Trace viewer**: lanes of nested spans for threads, processes or services, with markers across every lane. It zooms around the pointer, pans, measures a range with Shift+drag, folds a lane from its name and walks the call tree with the arrows. 200,000 spans take under a millisecond a frame.
@@ -34,6 +97,10 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
   - **Uptime bars**: a status page. Each service has its state, its uptime and a bar per day colored by availability, with hover details. Narrow panels keep the latest days.
   - **Time histogram**: event counts over time, stacked by series. Drag to select whole buckets, and hover for the counts. The time labels adapt from seconds to weeks.
 - The code editor takes `marks`, ranges of bytes to highlight in the accent or a series color. The highlighter takes `"text"` for no highlighting.
+
+### Fixed
+
+- `CUI_VERSION_STRING` said "1.1.0" in 1.2. It now matches `CUI_VERSION_MAJOR`, `MINOR` and `PATCH`, and the gallery shows the version from them.
 
 ## 2026-11-09 · 1.2: phones, tablets, right to left and performance
 
