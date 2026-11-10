@@ -36,6 +36,9 @@ static const char *const kw_go[] = { "func", "package", "import", "var", "const"
 static const char *const ty_go[] = { "int", "int64", "int32", "uint", "uint64", "float64", "float32", "string", "bool", "byte", "rune", "error", NULL };
 static const char *const kw_sh[] = { "if", "then", "else", "elif", "fi", "for", "in", "do", "done", "while", "case", "esac", "function",
                                      "return", "export", "local", "echo", "cd", "sudo", "cmake", "make", "git", "apt", "brew", NULL };
+static const char *const kw_lua[] = { "and", "break", "do", "else", "elseif", "end", "for", "function", "goto", "if", "in", "local",
+                                      "not", "or", "repeat", "return", "then", "until", "while", NULL };
+static const char *const ty_lua[] = { "string", "number", "boolean", "table", "self", NULL };
 static const char *const none[] = { NULL };
 
 bool cui__at(const char *s, int e, int i, const char *m) {
@@ -56,6 +59,8 @@ cui__lang cui__lang_for(const char *lang) {
         l.kw = kw_rs; l.types = ty_rs; l.line_comment = "//"; l.block_open = "/*"; l.block_close = "*/";
     } else if (!strcmp(lang, "go")) {
         l.kw = kw_go; l.types = ty_go; l.line_comment = "//"; l.block_open = "/*"; l.block_close = "*/"; l.backtick = true;
+    } else if (!strcmp(lang, "lua")) {
+        l.kw = kw_lua; l.types = ty_lua; l.line_comment = "--"; l.block_open = "--[["; l.block_close = "]]";
     } else if (!strcmp(lang, "shell") || !strcmp(lang, "sh") || !strcmp(lang, "bash")) {
         l.kw = kw_sh; l.line_comment = "#"; l.no_caps_types = true;
     } else if (!strcmp(lang, "text") || !strcmp(lang, "plain")) {
@@ -86,7 +91,7 @@ int cui__tokenize(const cui__lang *L, bool json, const char *s, int n, bool *in_
         }
         char c = s[i];
         if (c == ' ' || c == '\t') { int st = i; while (i < n && (s[i] == ' ' || s[i] == '\t')) i++; EMIT(st, i - st, TK_TEXT); continue; }
-        /* block open before line comment: a block opener may begin with the line marker */
+        /* the block open is checked first: in Lua "--[[" starts with the line marker "--" */
         if (L->block_open && cui__at(s, n, i, L->block_open)) { *in_block = true; continue; }
         if (L->line_comment && strncmp(s + i, L->line_comment, strlen(L->line_comment)) == 0) { EMIT(i, n - i, TK_COMMENT); break; }
         if (L->hash_preproc && c == '#') {
@@ -123,7 +128,8 @@ int cui__tokenize(const cui__lang *L, bool json, const char *s, int n, bool *in_
             else if (cui__in_list(L->kw, s + st, len)) kind = TK_KEYWORD;
             else if (cui__in_list(L->types, s + st, len)) kind = TK_TYPE;
             else if ((len == 4 && (!strncmp(s + st, "true", 4) || !strncmp(s + st, "NULL", 4) || !strncmp(s + st, "None", 4) || !strncmp(s + st, "null", 4))) ||
-                     (len == 5 && (!strncmp(s + st, "false", 5) || !strncmp(s + st, "False", 5))) || (len == 4 && !strncmp(s + st, "True", 4)))
+                     (len == 5 && (!strncmp(s + st, "false", 5) || !strncmp(s + st, "False", 5))) || (len == 4 && !strncmp(s + st, "True", 4)) ||
+                     (len == 3 && !strncmp(s + st, "nil", 3)))
                 kind = TK_CONST;
             else {
                 int k = i;

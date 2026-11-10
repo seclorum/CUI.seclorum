@@ -6795,6 +6795,165 @@ static void build_em(cui_ctx *ui, void *u) {
     cui_pop_id(ui);
     cui_pop_id(ui);
 }
+/* Lua console --------------------------------------------------------------- */
+
+#ifdef CUI_WITH_LUA
+cui_terminal_buffer *cui__script_term(cui_script *s);
+
+static void rp_pane(cui_script *s, char *out, size_t cap) {   /* the tail of the pane, newest last */
+    cui_terminal_buffer *t = cui__script_term(s);
+    out[0] = 0;
+    char tmp[4200];
+    size_t n = 0;
+    for (int i = t->count - 1; i >= 0; i--) {
+        cui_terminal_line *L = &t->lines[(t->first + i) % t->line_cap];
+        snprintf(tmp, sizeof tmp, "%.*s\n", (int)L->len, t->text + L->offset);
+        size_t l = strlen(tmp);
+        if (n + l >= cap - 1) break;
+        memmove(out + l, out, n + 1);
+        memcpy(out, tmp, l);
+        n += l;
+    }
+}
+static bool rp_has(cui_script *s, const char *needle) {
+    static char buf[16384];
+    rp_pane(s, buf, sizeof buf);
+    return strstr(buf, needle) != NULL;
+}
+static int rp_count(cui_script *s, const char *needle) {
+    static char buf[16384];
+    rp_pane(s, buf, sizeof buf);
+    int n = 0;
+    for (char *p = strstr(buf, needle); p; p = strstr(p + strlen(needle), needle)) n++;
+    return n;
+}
+static int rp_add(void *ud, const char *const *args, int n, char *out, size_t cap) {
+    (void)ud;
+    if (n < 2) { snprintf(out, cap, "usage: add(a, b)"); return 1; }
+    snprintf(out, cap, "%g", atof(args[0]) + atof(args[1]));
+    return 1;
+}
+typedef struct { cui_script *s; cui_repl_result r; bool autofocus; cui_id ed; } rp_ctx;
+static void build_rp(cui_ctx *ui, void *u) {
+    rp_ctx *c = u;
+    cui_column(ui, .pad = 16) {
+        c->r = cui_repl(ui, "repl", c->s, .width = CUI_PX(600), .height = 300, .autofocus = c->autofocus);
+        if (!c->ed) { cui_push_id(ui, "repl"); c->ed = cui_make_id(ui, "in"); cui_pop_id(ui); }
+    }
+}
+/* move the caret with the editor's own request, so typing behaves like a user typing */
+static void rp_goto(cui_ctx *ui, rp_ctx *c, int line, int col) {
+    cui_push_id(ui, "repl");
+    cui_code_editor_goto(ui, "in", line, col);
+    cui_pop_id(ui);
+    run(ui, build_rp, c, 1);
+}
+#endif
+
+static void test_repl(void) {
+#ifdef CUI_WITH_LUA
+    printf("repl: evaluation, continuation, history, sandbox, app functions\n");
+    cui_ctx *ui = new_ctx();
+    static cui_script *s;
+    if (!s) s = cui_script_new();
+    CHECK(s != NULL);
+    cui_script_set_fn(s, "add", rp_add, NULL);
+    rp_ctx c;
+    memset(&c, 0, sizeof c);
+    c.s = s; c.autofocus = true;
+    run(ui, build_rp, &c, 3);
+    CHECK(c.r.executed == false);
+    /* the editor needs a click or a request to take the caret; autofocus only fired once */
+    rp_goto(ui, &c, 1, 1);
+
+    /* an expression runs on Enter and prints its value */
+    type(ui, build_rp, &c, "1+1");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(c.r.executed);
+    CHECK(rp_has(s, "1+1") && rp_has(s, "\n2\n"));
+
+    /* Enter on an empty buffer is a no-op */
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(!c.r.executed);
+
+    /* a chunk spans lines until the compiler is satisfied */
+    type(ui, build_rp, &c, "function f()");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(!c.r.executed);
+    type(ui, build_rp, &c, "return 42");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(!c.r.executed);
+    type(ui, build_rp, &c, "end");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(c.r.executed);
+    CHECK(rp_has(s, ">> "));                      /* the continuation echoed */
+    type(ui, build_rp, &c, "f()");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(rp_has(s, "\n42\n"));
+
+    /* print() goes to the pane, separated by a tab (which the terminal sets at column 8) */
+    type(ui, build_rp, &c, "print(\"hi\", 3)");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(rp_has(s, "hi      3"));
+
+    /* = prints even a nil */
+    type(ui, build_rp, &c, "=nil");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(rp_has(s, "\nnil\n"));
+
+    /* a broken chunk run with Ctrl+Enter reports the error in red */
+    type(ui, build_rp, &c, "1 +");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, CUI_MOD_CTRL);
+    CHECK(c.r.executed);
+    CHECK(rp_has(s, "\x1b[31m"));
+
+    /* the app's function: two numbers in, their sum out */
+    type(ui, build_rp, &c, "add(2, 3)");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(rp_has(s, "\n5\n"));
+    type(ui, build_rp, &c, "add(1)");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(rp_has(s, "usage: add(a, b)"));
+
+    /* globals cross both ways */
+    cui_script_set_number(s, "x", 5);
+    cui_script_eval(s, "x * 2");
+    CHECK(rp_has(s, "\n10\n"));
+    cui_script_eval(s, "y = 7");
+    CHECK(cui_script_get_number(s, "y") == 7);
+    cui_script_set_string(s, "who", "lua");
+    cui_script_eval(s, "who");
+    CHECK(rp_has(s, "\nlua\n"));
+    CHECK(cui_script_get_string(s, "who") && strcmp(cui_script_get_string(s, "who"), "lua") == 0);
+    CHECK(cui_script_get_string(s, "nobody_here") == NULL);
+
+    /* the sandbox: no shell, no files, no exit */
+    cui_script_eval(s, "assert(io == nil and require == nil and os.execute == nil and os.exit == nil)");
+    CHECK(!rp_has(s, "assertion failed"));
+
+    /* history: Up with an empty input recalls the last command, Enter runs it again */
+    type(ui, build_rp, &c, "print('zz')");
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    int nzz = rp_count(s, "\nzz\n");
+    key(ui, build_rp, &c, CUI_KEY_UP, 0);
+    key(ui, build_rp, &c, CUI_KEY_ENTER, 0);
+    CHECK(c.r.executed && rp_count(s, "\nzz\n") == nzz + 1);
+
+    /* Ctrl+L empties the pane */
+    key(ui, build_rp, &c, CUI_KEY_L, CUI_MOD_CTRL);
+    run(ui, build_rp, &c, 1);
+    CHECK(!rp_has(s, "42"));
+
+    /* long output stays inside the ring */
+    cui_script_eval(s, "for i = 1, 5000 do print(string.rep('x', 80)) end");
+    CHECK(cui_script_get_number(s, "x") == 5);   /* the state still answers */
+    cui_script_eval(s, "1 + 1");
+    CHECK(rp_has(s, "\n2\n"));
+#else
+    printf("repl: skipped (built without CUI_LUA)\n");
+#endif
+}
+
 static void test_emoji(void) {
     printf("emoji: list, search, tones, recent, keys, clicks, font tables\n");
     cui_ctx *ui = new_ctx();
@@ -7116,6 +7275,7 @@ int main(void) {
     test_photo();
     test_files();
     test_terminal();
+    test_repl();
     test_emoji();
     test_atlas_shrink();
     test_sw_incremental();

@@ -280,6 +280,7 @@ Complete apps in [`examples/`](examples), each a single C file.
 | [`notes`](examples/notes.c) | Split view, search, context menus, dialogs, shortcuts, file export |
 | [`settings`](examples/settings.c) | Forms, validation, preferences and a danger zone |
 | [`gallery`](examples/gallery_ui.c) | Every component, light and dark, all accents |
+| [`repl`](examples/repl.c) | Lua console driving the UI: the slider, label and theme shared with the script (needs `-DCUI_LUA=ON`) |
 | [`hello`](examples/hello.c) | The smallest app |
 
 <table>

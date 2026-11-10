@@ -701,6 +701,28 @@ Long lines wrap at the panel width. Each line keeps its count of characters, so 
 
 Drag over the output to select, and press Ctrl+C (Cmd+C on macOS) to copy it without the color codes. With nothing selected, Ctrl+C clears the input, prints `^C` and sets `interrupt`. Ctrl+L clears the screen, Up and Down walk back through the last 32 commands, and clicking the output puts the caret at the prompt. `.no_input = true` leaves just the output. `.size` sets the text size (13 by default) and a `.height` of -1 fills the parent.
 
+### Lua console
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/components/repl-dark.png"><img src="images/components/repl.png" alt="Lua console"></picture>
+
+```c
+static cui_script *lua;
+if (!lua) {
+    lua = cui_script_new();                                  /* NULL without CUI_LUA=ON */
+    cui_script_set_fn(lua, "greet", greet_fn, NULL);         /* Lua calls greet("ada") */
+    cui_script_set_number(lua, "hits", 0);                   /* shared with the UI */
+}
+
+cui_repl_result r = cui_repl(ui, "console", lua, .height = 360, .autofocus = true);
+double hits = cui_script_get_number(lua, "hits");            /* read back what the user set */
+```
+
+A console the user can script your app with: a terminal-style output pane over a Lua-highlighted editor. Built when CUI is configured with `CUI_LUA=ON` (it vendors Lua 5.4); the component still renders without it and shows a note.
+
+Enter runs the text when the compiler says the chunk is complete, so functions span lines on their own; an unfinished chunk waits and the prompt becomes `>>`. Shift+Enter always adds a newline, Ctrl+Enter runs whatever is there, Up and Down with an empty input walk the history, Ctrl+L clears the pane. A single expression prints its value and a leading `=` prints it even when it is nil. `print()`, results and errors go to the pane, which keeps the last few thousand lines like the terminal.
+
+State crosses both ways: `cui_script_set_number`/`set_string` push values the script can read, `get_number`/`get_string` read back what the user assigned. `cui_script_set_fn` exposes an app function taking string arguments and returning a string; the standard libraries are there except `io` and `require`, and `os` loses `execute`, `exit`, `remove`, `rename` and `tmpname`, so a console left open cannot leave the program. `cui_script_lua` hands the `lua_State` to apps that link Lua themselves.
+
 ### Hex viewer
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="images/components/hex-viewer-dark.png"><img src="images/components/hex-viewer.png" alt="Hex viewer"></picture>
