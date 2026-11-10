@@ -43,22 +43,26 @@ static int dark_fn(void *ud, const char *const *args, int n, char *out, size_t c
 static void frame(cui_ctx *ui, void *user) {
     rp_app *a = user;
     a->ui = ui;
-    cui_column(ui, .pad = 20, .gap = 12, .width = CUI_FILL) {
-        cui_row(ui, .gap = 12, .align = CUI_ALIGN_CENTER) {
-            cui_heading(ui, "Lua console", 3);
-            cui_muted(ui, "the widgets above are shared with the script");
-        }
-        cui_row(ui, .gap = 16, .align = CUI_ALIGN_CENTER) {
-            float cnt = (float)cui_script_get_number(a->lua, "count");
-            if (cui_slider(ui, "count", &cnt, 0, 100, .show_value = false))
-                cui_script_set_number(a->lua, "count", cnt);
-            cui_text(ui, label, .font = CUI_FONT_MEDIUM);
-            if (cui_switch(ui, "Dark", &a->dark)) cui_set_theme(ui, a->dark ? CUI_THEME_DARK : CUI_THEME_LIGHT);
-        }
+    /* same containers as the gallery's developer tools page: a scrolling
+     * column, so every card keeps its box even when the window is short */
+    cui_scroll(ui, .id = "main", .width = CUI_FILL, .height = CUI_FILL, .fade_edges = true) {
+        cui_column(ui, .pad = 20, .gap = 12, .width = CUI_FILL) {
+            cui_row(ui, .gap = 12, .align = CUI_ALIGN_CENTER) {
+                cui_heading(ui, "Lua console", 3);
+                cui_muted(ui, "the widgets above are shared with the script");
+            }
+            cui_row(ui, .gap = 16, .align = CUI_ALIGN_CENTER) {
+                float cnt = (float)cui_script_get_number(a->lua, "count");
+                if (cui_slider(ui, "count", &cnt, 0, 100, .show_value = false))
+                    cui_script_set_number(a->lua, "count", cnt);
+                cui_text(ui, label, .font = CUI_FONT_MEDIUM);
+                if (cui_switch(ui, "Dark", &a->dark)) cui_set_theme(ui, a->dark ? CUI_THEME_DARK : CUI_THEME_LIGHT);
+            }
             cui_script_widget(ui, "panel", a->lua, "panel");
-            cui_repl(ui, "console", a->lua, .width = CUI_FILL, .height = -1, .autofocus = true);
+            cui_repl(ui, "console", a->lua, .width = CUI_FILL, .height = 300, .autofocus = true);
         }
     }
+}
 
 int main(void) {
     static rp_app a;

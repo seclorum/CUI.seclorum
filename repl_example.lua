@@ -1,96 +1,16 @@
 -- Paste into the Lua console of examples/repl or the gallery's Developer tools
--- page. The TODO card inserts itself at the end of the running card stack: the
--- wrapper first calls the app's own function for this slot (_G[__cui_slot]),
--- then draws its own card after it. widget(nil) restores the plain app card.
-local say = note or toast or function() end        -- note() in the gallery, toast() in repl
-
-local function graph(ui, self)
-  self.items  = self.items or {}
-  self.next   = self.next or 0
-  self.draft  = self.draft or ""
-  self.filter = self.filter or "all"
-
-  local function add()
-    if self.draft ~= "" then
-      self.next = self.next + 1
-      table.insert(self.items, { id = self.next, text = self.draft, done = false, star = 0 })
-      local t = self.draft
-      self.draft = ""
-      say("added: " .. t)
-      ui.toast("task added", { tone = "success", description = t, duration = 2 })
-    end
-  end
-
-  ui.card({ gap = 12, width = "fill", pad = 14 }, function()
-    ui.row({ gap = 8, align = "center" }, function()
-      ui.icon("list", 18)
-      ui.heading("tasks", 3)
-      ui.spacer()
-      local open = 0
-      for _, t in ipairs(self.items) do if not t.done then open = open + 1 end end
-      ui.badge(open .. " open", { tone = open > 0 and "info" or "success", dot = true })
-    end)
-
-    self.draft, self.sent = ui.textfield("draft", self.draft, {
-      placeholder = "what needs doing?", icon = "plus", clearable = true })
-    if self.sent then add() end
-
-    ui.row({ gap = 8 }, function()
-      if ui.button("Add", { variant = "primary", icon = "plus" }) then add() end
-      for _, f in ipairs{ "all", "open", "done" } do
-        if ui.button(f, { variant = "ghost", selected = self.filter == f }) then self.filter = f end
-      end
-      ui.spacer()
-      if ui.button("Ping", { variant = "outline", icon = "zap" }) then
-        if hits ~= nil then hits = hits + 1 elseif count ~= nil then count = count + 1 end
-      end
-    end)
-
-    local rows = {}
-    for _, t in ipairs(self.items) do
-      if (self.filter == "all") or (self.filter == "open" and not t.done)
-        or (self.filter == "done" and t.done) then table.insert(rows, t) end
-    end
-    table.sort(rows, function(a, b) return a.star > b.star or (a.star == b.star and a.id > b.id) end)
-
-    if #rows == 0 then
-      ui.muted(self.filter == "all" and "nothing yet - type above." or "nothing " .. self.filter .. ".")
-    else
-      ui.scroll({ height = 200, fade_edges = true, gap = 4 }, function()
-        for _, t in ipairs(rows) do
-          ui.row({ gap = 8, align = "center" }, function()
-            t.done = ui.checkbox("d" .. t.id, t.done)
-            ui.text(t.text)
-            if t.done then ui.badge("done", { tone = "success" }) end
-            ui.spacer()
-            t.star = ui.rating("s" .. t.id, t.star, 5)
-            if ui.button("", { icon = "trash-2", variant = "ghost", tooltip = "remove" }) then
-              for i, x in ipairs(self.items) do if x.id == t.id then table.remove(self.items, i) break end end
-            end
-          end)
-        end
-      end)
-      local done = 0
-      for _, t in ipairs(self.items) do if t.done then done = done + 1 end end
-      ui.progress(#self.items > 0 and done / #self.items or 0,
-        { tone = "accent", show_value = true, label = string.format("%d of %d", done, #self.items) })
-    end
-
-    ui.separator()
-    ui.row({ gap = 8, align = "center" }, function()
-      ui.muted("shared counter: ")
-      ui.badge(tostring(hits or count or 0), { tone = "violet", solid = true })
-      if greet and ui.button("greet", { variant = "ghost", size = "sm" }) then
-        ui.text(greet("ada"), { font = "mono" })
-      end
-      ui.kbd("Enter")
-      ui.secondary("submits the field")
-    end)
-  end)
-end
+-- page. The EXPAND card joins the app's own card: the wrapper first calls the
+-- app's function for this slot (_G[__cui_slot]), then draws its card after it.
+-- The text field starts as "e"; pressing EXPAND turns it into "E X P A N D".
+-- widget(nil) restores the plain app card.
 
 widget(function(ui, self)
   local app_card = _G[__cui_slot]                  -- the app's original function for this slot
   if app_card then app_card(ui, self) end          -- the card stack the app already runs
-  graph(ui, self)                                  -- our card joins it at the end
+  self.expand = self.expand or 'e'                 -- the text starts as "e"
+  ui.card({ gap = 8 }, function()
+    ui.label('press EXPAND to stretch the text')
+    self.expand = ui.textfield('expand', self.expand)
+    if ui.button('EXPAND', { variant = 'primary' }) then self.expand = 'E X P A N S I O N From The R E P L' end
+  end)
 end)

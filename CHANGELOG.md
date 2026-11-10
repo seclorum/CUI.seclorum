@@ -39,6 +39,7 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 
 ### Fixed
 
+- The Lua console example ([`examples/repl.c`](examples/repl.c)) now uses the same containers as the gallery's *Developer tools* page: the widgets sit in a scrolling column and the console has a fixed height, so after `repl_example.lua` is pasted and the TODO card joins the app's card stack, every card keeps its box and stays reachable when the window is shorter than the content.
 - The values of an enum on a component page's "Data and results" section showed as `[object HTMLElement]` (17 pages).
 - Eight component pages said things their component does not do: the icon button's icon swap (it animates on `cui_button`, not on `cui_icon_button`), a tooltip placed after a badge, a hover card on an avatar, Tab inside the time picker and the color picker, and the keys of the onboarding checklist, comments and JSON viewer. The pages now say what the code does, and the README lists the time picker and color picker among the parts that still need a pointer.
 
