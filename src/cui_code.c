@@ -38,19 +38,24 @@ static const char *const kw_sh[] = { "if", "then", "else", "elif", "fi", "for", 
                                      "return", "export", "local", "echo", "cd", "sudo", "cmake", "make", "git", "apt", "brew", NULL };
 static const char *const none[] = { NULL };
 
+bool cui__at(const char *s, int e, int i, const char *m) {
+    size_t l = strlen(m);
+    return (size_t)(e - i) >= l && strncmp(s + i, m, l) == 0;
+}
+
 cui__lang cui__lang_for(const char *lang) {
-    cui__lang l = { none, none, NULL, NULL, false, false, false, false };
+    cui__lang l = { none, none, NULL, NULL, NULL, NULL, false, false, false, false };
     if (!lang) return l;
     if (!strcmp(lang, "c") || !strcmp(lang, "cpp") || !strcmp(lang, "c++") || !strcmp(lang, "h")) {
-        l.kw = kw_c; l.types = ty_c; l.line_comment = "//"; l.block_comments = true; l.hash_preproc = true;
+        l.kw = kw_c; l.types = ty_c; l.line_comment = "//"; l.block_open = "/*"; l.block_close = "*/"; l.hash_preproc = true;
     } else if (!strcmp(lang, "js") || !strcmp(lang, "ts") || !strcmp(lang, "javascript") || !strcmp(lang, "typescript")) {
-        l.kw = kw_js; l.types = ty_js; l.line_comment = "//"; l.block_comments = true; l.backtick = true;
+        l.kw = kw_js; l.types = ty_js; l.line_comment = "//"; l.block_open = "/*"; l.block_close = "*/"; l.backtick = true;
     } else if (!strcmp(lang, "python") || !strcmp(lang, "py")) {
         l.kw = kw_py; l.types = ty_py; l.line_comment = "#";
     } else if (!strcmp(lang, "rust") || !strcmp(lang, "rs")) {
-        l.kw = kw_rs; l.types = ty_rs; l.line_comment = "//"; l.block_comments = true;
+        l.kw = kw_rs; l.types = ty_rs; l.line_comment = "//"; l.block_open = "/*"; l.block_close = "*/";
     } else if (!strcmp(lang, "go")) {
-        l.kw = kw_go; l.types = ty_go; l.line_comment = "//"; l.block_comments = true; l.backtick = true;
+        l.kw = kw_go; l.types = ty_go; l.line_comment = "//"; l.block_open = "/*"; l.block_close = "*/"; l.backtick = true;
     } else if (!strcmp(lang, "shell") || !strcmp(lang, "sh") || !strcmp(lang, "bash")) {
         l.kw = kw_sh; l.line_comment = "#"; l.no_caps_types = true;
     } else if (!strcmp(lang, "text") || !strcmp(lang, "plain")) {
@@ -74,15 +79,16 @@ int cui__tokenize(const cui__lang *L, bool json, const char *s, int n, bool *in_
     while (i < n) {
         if (*in_block) {
             int st = i;
-            while (i < n && !(s[i] == '*' && i + 1 < n && s[i + 1] == '/')) i++;
-            if (i < n) { i += 2; *in_block = false; }
+            while (i < n && !cui__at(s, n, i, L->block_close)) i++;
+            if (i < n) { i += (int)strlen(L->block_close); *in_block = false; }
             EMIT(st, i - st, TK_COMMENT);
             continue;
         }
         char c = s[i];
         if (c == ' ' || c == '\t') { int st = i; while (i < n && (s[i] == ' ' || s[i] == '\t')) i++; EMIT(st, i - st, TK_TEXT); continue; }
+        /* block open before line comment: a block opener may begin with the line marker */
+        if (L->block_open && cui__at(s, n, i, L->block_open)) { *in_block = true; continue; }
         if (L->line_comment && strncmp(s + i, L->line_comment, strlen(L->line_comment)) == 0) { EMIT(i, n - i, TK_COMMENT); break; }
-        if (L->block_comments && c == '/' && i + 1 < n && s[i + 1] == '*') { *in_block = true; continue; }
         if (L->hash_preproc && c == '#') {
             int st = i;
             i++;
