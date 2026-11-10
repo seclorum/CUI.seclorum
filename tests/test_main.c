@@ -7062,6 +7062,18 @@ static void test_lua_widget(void) {
     run(ui, build_lw, &c, 2);
     CHECK(cui_script_get_number(s, "count") == 42);
     c.fn = "stats"; c.wid = "w";                                    /* the first self is untouched */
+
+    /* widget(f) takes over the slot from the console; widget(nil) gives it back */
+    cui_script_eval(s, "function stats(ui, self) count = (count or 0) - 100 end");
+    cui_script_eval(s, "widget(function(ui, self) count = (count or 0) + 100 end)");
+    cui_script_eval(s, "count = 0");
+    run(ui, build_lw, &c, 2);
+    CHECK(cui_script_get_number(s, "count") == 200);
+    cui_script_eval(s, "widget(nil)");
+    run(ui, build_lw, &c, 1);
+    CHECK(cui_script_get_number(s, "count") == 100);                /* stats runs again, same self */
+    cui_script_eval(s, "widget(3)");
+    CHECK(rp_has(s, "wants a function"));
 #else
     printf("lua widgets: skipped (built without CUI_LUA)\n");
 #endif

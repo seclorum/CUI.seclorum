@@ -398,7 +398,12 @@ static const char *const lw_boot =
     "ui.column = scoped('column_begin', 'column_end')\n"
     "ui.box = scoped('box_begin', 'box_end')\n"
     "ui.card = scoped('card_begin', 'card_end')\n"
-    "ui.scroll = scoped('scroll_begin', 'scroll_end')\n";
+    "ui.scroll = scoped('scroll_begin', 'scroll_end')\n"
+    "widget = function(f)\n"
+    "  if f == nil then __cui_widget = nil return end\n"
+    "  if type(f) ~= 'function' then error('widget(f) wants a function or nil', 2) end\n"
+    "  __cui_widget = f\n"
+    "end\n";
 
 void cui__lua_ui_install(cui_script *s) {
     lua_State *L = (lua_State *)cui__script_lua_impl(s);
@@ -443,7 +448,11 @@ void cui_script_widget(cui_ctx *ui, const char *id_str, cui_script *s, const cha
     }
     int self_idx = base + 3;
 
-    lua_getglobal(L, fn);
+    lua_getglobal(L, "__cui_widget");   /* widget(f) from the console replaces the slot */
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        lua_getglobal(L, fn);
+    }
     if (!lua_isfunction(L, -1)) {
         snprintf(st->err, sizeof st->err, "no Lua function '%s'", fn);
         lua_settop(L, 0);
