@@ -1526,6 +1526,35 @@ CUI_API cui_repl_result cui_repl_ex(cui_ctx *ui, const char *id, cui_script *s, 
 #define cui_repl(ui, id, s, ...) cui_repl_ex((ui), (id), (s), CUI__OPTS(cui_repl_opts, __VA_ARGS__))
 #endif
 
+/* A live widget: calls the Lua global `fn` once a frame through a curated
+ * ui.* table, so the user composes real components from the console.
+ *
+ *     -- typed into the console:
+ *     function stats(ui, self)
+ *         ui.column({ gap = 8, pad = 12 }, function()
+ *             ui.heading("Stats", 3)
+ *             self.n = (self.n or 0) + (ui.button("tick") and 1 or 0)
+ *             ui.text("clicks: " .. self.n)
+ *             self.v = ui.slider("v", self.v or 0.5, { min = 0, max = 1 })
+ *         end)
+ *     end
+ *     -- in the app, where the widget should appear:
+ *     cui_script_widget(ui, "stats", lua, "stats");
+ *
+ * self is a table that survives between frames, per widget instance. The
+ * ui table: row, column, box, card, scroll (closures taking (opts, fn), plus
+ * the raw begin/end function pairs for advanced use), text, heading, muted,
+ * secondary, code, kbd, icon, separator, spacer, gap, badge, progress,
+ * button, checkbox, switch, slider, rating, textfield, textarea, toast.
+ * Sizes are numbers (points) or "fill"/"fit"; dirs and aligns are strings
+ * ("row", "center", ...). ui.textfield(id, value, opts) and ui.textarea
+ * return the (possibly typed-in) string plus a submitted flag: keep the
+ * value in self. Containers take opts tables; a Lua error, or a begin
+ * without its end, unwinds the node tree and the widget draws its message
+ * in red until it works again. Calling ui.* from the console (outside a
+ * widget), or cui_script_eval during a widget, is refused. */
+CUI_API void cui_script_widget(cui_ctx *ui, const char *id, cui_script *s, const char *fn);
+
 /* ---- Diff viewer ---- */
 
 /* Diff viewer: compares two versions of a text line by line, side by side or

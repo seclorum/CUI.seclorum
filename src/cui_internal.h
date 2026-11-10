@@ -754,6 +754,8 @@ double cui__script_get_number(cui_script *s, const char *name);
 void cui__script_set_string(cui_script *s, const char *name, const char *v);
 const char *cui__script_get_string(cui_script *s, const char *name);
 void *cui__script_lua_impl(cui_script *s);
+void cui__lua_ui_install(cui_script *s);   /* the ui.* table and its bootstrap (cui_lua_ui.c) */
+bool cui__lw_in_widget(void);              /* nested eval guard (cui_lua_ui.c) */
 #endif
 
 #endif /* CUI_INTERNAL_H */

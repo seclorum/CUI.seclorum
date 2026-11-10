@@ -55,9 +55,10 @@ static void frame(cui_ctx *ui, void *user) {
             cui_text(ui, label, .font = CUI_FONT_MEDIUM);
             if (cui_switch(ui, "Dark", &a->dark)) cui_set_theme(ui, a->dark ? CUI_THEME_DARK : CUI_THEME_LIGHT);
         }
-        cui_repl(ui, "console", a->lua, .width = CUI_FILL, .height = -1, .autofocus = true);
+            cui_script_widget(ui, "panel", a->lua, "panel");
+            cui_repl(ui, "console", a->lua, .width = CUI_FILL, .height = -1, .autofocus = true);
+        }
     }
-}
 
 int main(void) {
     static rp_app a;
@@ -67,6 +68,16 @@ int main(void) {
         cui_script_set_fn(a.lua, "toast", toast_fn, &a);
         cui_script_set_fn(a.lua, "dark", dark_fn, &a);
         cui_script_set_number(a.lua, "count", 0);
+        cui_script_eval(a.lua,
+            "function panel(ui, self)\n"
+            "  ui.card({ gap = 8 }, function()\n"
+            "    ui.label('a card drawn from Lua')\n"
+            "    ui.text('count is shared with the slider above: ' .. count)\n"
+            "    if ui.button('+1') then count = count + 1 end\n"
+            "    self.who = ui.textfield('who', self.who or 'who to greet?')\n"
+            "    if ui.button('greet', { variant = 'primary' }) then toast('hello, ' .. self.who) end\n"
+            "  end)\n"
+            "end");
         cui_script_printf(a.lua, "\x1b[2mtry: count = count + 1   set_label(\"hi\")   toast(\"hello\")   dark(true)\x1b[0m\n");
     }
     int r = cui_app_run(&(cui_app_desc){ .title = "Lua console", .width = 720, .height = 560 }, frame, &a);

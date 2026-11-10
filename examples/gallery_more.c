@@ -1409,6 +1409,17 @@ static void devtools_repl(cui_ctx *ui) {
             cui_script_set_fn(lua, "note", rp_note_fn, NULL);
             cui_script_set_fn(lua, "greet", rp_greet_fn, NULL);
             cui_script_set_number(lua, "hits", 0);
+            cui_script_eval(lua,
+                "function live(ui, self)\n"
+                "  ui.card({ gap = 8 }, function()\n"
+                "    ui.label('a card drawn from Lua')\n"
+                "    ui.muted('this switch, slider and button are ui.* calls in the script')\n"
+                "    self.loud = ui.switch('Loud', self.loud)\n"
+                "    self.v = ui.slider('v', self.v or 0.4, { min = 0, max = 1 })\n"
+                "    ui.progress(self.v, { tone = 'accent', show_value = true })\n"
+                "    if ui.button('Ping', { variant = 'primary' }) then hits = hits + 1 end\n"
+                "  end)\n"
+                "end");
             cui_script_printf(lua, "\x1b[2mtry: hits = hits + 1   note(\"hi\")   greet(\"ada\")\x1b[0m\n");
         }
     }
@@ -1419,11 +1430,12 @@ static void devtools_repl(cui_ctx *ui) {
         if (cui_slider(ui, "hits", &h, 0, 50, .show_value = false)) cui_script_set_number(lua, "hits", h);
         cui_muted(ui, rp_note);
     }
+    cui_script_widget(ui, "live", lua, "live");
     cui_repl(ui, "console", lua, .width = CUI_FILL, .height = 300);
 }
 
 static void page_devtools(cui_ctx *ui) {
-    section(ui, "Lua console", "The script and the widgets above share state both ways.");
+    section(ui, "Lua console", "The card above is drawn by a Lua function: ui.* calls over real components. State is shared with the widgets both ways.");
     devtools_repl(ui);
     section(ui, "Trace viewer", "Wheel zooms, drag pans, Shift+drag measures, a lane's name folds it.");
     devtools_trace(ui);

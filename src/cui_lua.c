@@ -142,6 +142,10 @@ static void cui__lua_run(cui_script *s, int print_value) {
 
 void cui__script_exec(cui_script *s, const char *code, int print_result) {
     if (!s || !code) return;
+    if (cui__lw_in_widget()) {            /* building the tree from two places at once is a bug */
+        cui_terminal_printf(&s->term, "\x1b[31mrun code from outside a widget, not during one\x1b[0m\n");
+        return;
+    }
     while (*code == ' ' || *code == '\t') code++;
     if (*code == '=') {
         code++;
@@ -237,6 +241,7 @@ cui_script *cui__script_new(void) {
     cui_terminal_init(&s->term, s->text, CUI__LUA_TEXT, s->lines, CUI__LUA_LINES);
     luaL_openlibs(s->L);
     cui__lua_sandbox(s->L);
+    cui__lua_ui_install(s);   /* the ui.* table for live widgets (cui_lua_ui.c) */
     lua_pushlightuserdata(s->L, s);
     lua_pushcclosure(s->L, cui__lua_print, 1);
     lua_setglobal(s->L, "print");

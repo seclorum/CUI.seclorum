@@ -274,3 +274,14 @@ void *cui_script_lua(cui_script *s) {
     return NULL;
 #endif
 }
+
+#ifndef CUI_WITH_LUA   /* with the engine, cui_lua_ui.c provides this */
+void cui_script_widget(cui_ctx *ui, const char *id, cui_script *s, const char *fn) {
+    (void)id; (void)s; (void)fn;
+    int first = ui->node_count;
+    int t = cui__text_node(ui, "Build with CUI_LUA=ON to run Lua.", -1, CUI_FONT_BODY,
+                           cui__fs(ui, ui->theme.text_sm), CUI_C(ui, TEXT_MUTED), true);
+    ui->nodes[t].pad[0] = ui->nodes[t].pad[1] = ui->nodes[t].pad[2] = ui->nodes[t].pad[3] = 12;
+    cui__keep_ltr(ui, first);
+}
+#endif

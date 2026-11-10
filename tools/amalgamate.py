@@ -42,7 +42,7 @@ def library_sources():
     src = os.path.join(ROOT, "src")
     optional = {"cui_font_data.c": "!CUI_NO_DEFAULT_FONTS", "cui_inflate.c": "!CUI_NO_DEFAULT_FONTS",
                 "cui_bidi.c": "CUI_TEXT_SHAPING", "cui_shape.c": "CUI_TEXT_SHAPING",
-                "cui_lua.c": "CUI_WITH_LUA"}
+                "cui_lua.c": "CUI_WITH_LUA", "cui_lua_ui.c": "CUI_WITH_LUA"}
     files = []
     for name in sorted(os.listdir(src)):
         if name.endswith(".c"):

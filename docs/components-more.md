@@ -723,6 +723,25 @@ Enter runs the text when the compiler says the chunk is complete, so functions s
 
 State crosses both ways: `cui_script_set_number`/`set_string` push values the script can read, `get_number`/`get_string` read back what the user assigned. `cui_script_set_fn` exposes an app function taking string arguments and returning a string; the standard libraries are there except `io` and `require`, and `os` loses `execute`, `exit`, `remove`, `rename` and `tmpname`, so a console left open cannot leave the program. `cui_script_lua` hands the `lua_State` to apps that link Lua themselves.
 
+**Script widgets.** `cui_script_widget` calls a Lua function once a frame through a curated `ui.*` table, so the user composes real components from the console:
+
+```lua
+-- typed into the console; the app calls cui_script_widget(ui, "panel", lua, "panel")
+function panel(ui, self)
+    ui.card({ gap = 8 }, function()
+        ui.label("a card drawn from Lua")
+        self.loud = ui.switch("Loud", self.loud)
+        self.v = ui.slider("v", self.v or 0.6, { min = 0, max = 1 })
+        ui.progress(self.v, { tone = "accent", show_value = true })
+        if ui.button("Ping", { variant = "primary" }) then hits = hits + 1 end
+    end)
+end
+```
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/components/live-widget-dark.png"><img src="images/components/live-widget.png" alt="Script widget"></picture>
+
+`self` is a table that survives between frames, one per widget instance, so controls keep their value there: `self.who = ui.textfield("who", self.who or "")`. The surface: `row`, `column`, `box`, `card`, `scroll` (closures taking an options table and a function, plus the raw begin/end pairs), `text`, `heading`, `muted`, `label`, `secondary`, `code`, `kbd`, `icon`, `separator`, `spacer`, `gap`, `badge`, `progress`, `button`, `checkbox`, `switch`, `slider`, `rating`, `textfield`, `textarea`, `toast`. Sizes are numbers in points or `"fill"`/`"fit"`; directions, alignments, tones and variants are strings. A Lua error, or a begin without its end, unwinds the node tree and the widget draws its message in red until it works again — a broken script cannot corrupt the frame. Calling `ui.*` from the console outside a widget, or `cui_script_eval` during one, is refused.
+
 ### Hex viewer
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="images/components/hex-viewer-dark.png"><img src="images/components/hex-viewer.png" alt="Hex viewer"></picture>

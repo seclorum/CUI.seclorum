@@ -6954,6 +6954,119 @@ static void test_repl(void) {
 #endif
 }
 
+/* Lua widgets ------------------------------------------------------------ */
+
+#ifdef CUI_WITH_LUA
+typedef struct { cui_script *s; const char *fn; const char *wid; } lw_ctx;
+static void build_lw(cui_ctx *ui, void *u) {
+    lw_ctx *c = u;
+    cui_column(ui, .pad = 12) {
+        cui_script_widget(ui, c->wid, c->s, c->fn);
+    }
+}
+static int lw_eval_fn(void *ud, const char *const *args, int n, char *out, size_t cap) {
+    (void)out; (void)cap;
+    if (n >= 1) cui_script_eval((cui_script *)ud, args[0]);   /* must be refused inside a widget */
+    return 0;
+}
+#endif
+
+static void test_lua_widget(void) {
+#ifdef CUI_WITH_LUA
+    printf("lua widgets: bindings, self, unwinding, fields, guards\n");
+    cui_ctx *ui = new_ctx();
+    static cui_script *s;
+    if (!s) s = cui_script_new();
+    CHECK(s != NULL);
+    lw_ctx c = { s, "stats", "w" };
+
+    /* a function the console has not defined: reported, the frame still completes */
+    run(ui, build_lw, &c, 2);
+    CHECK(true);
+
+    /* counter: self survives frames, the button reports its click */
+    cui_script_eval(s, "function stats(ui, self)"
+        " ui.column({ gap = 4 }, function()"
+        " self.n = (self.n or 0) + (ui.button('tick') and 1 or 0)"
+        " count = self.n end) end");
+    run(ui, build_lw, &c, 2);
+    cui_push_id(ui, "w"); cui_id bid = cui_make_id(ui, "tick"); cui_pop_id(ui);
+    cui_rect r = rect_of(ui, bid);
+    CHECK(r.w > 0 && r.h > 0);
+    click_at(ui, build_lw, &c, r.x + 2, r.y + 2);
+    CHECK(cui_script_get_number(s, "count") == 1);
+    click_at(ui, build_lw, &c, r.x + 2, r.y + 2);
+    CHECK(cui_script_get_number(s, "count") == 2);   /* the same button keeps its identity */
+
+    /* raw begin/end, and the closure sugar over the same pair */
+    cui_script_eval(s, "function stats(ui, self)"
+        " ui.row_begin() ui.text('raw') ui.row_end()"
+        " ui.row({ gap = 2 }, function() ui.label('sugar') ui.kbd('Ctrl K') end)"
+        " ui.card({ id = 'cb', hoverable = true }, function() ui.text('card') end)"
+        " count = self.n or 0 end");
+    run(ui, build_lw, &c, 3);
+    CHECK(cui_script_get_number(s, "count") == 2);   /* self kept across the rewrite */
+
+    /* a Lua error mid-widget unwinds its containers; fixing the code recovers */
+    cui_script_eval(s, "function stats(ui, self) ui.column({}, function() boom() end) end");
+    run(ui, build_lw, &c, 2);
+    cui_script_eval(s, "function boom() end");        /* defining it makes the call work */
+    run(ui, build_lw, &c, 2);
+    CHECK(true);
+
+    /* a begin without its end is caught and unwound, later frames keep working */
+    cui_script_eval(s, "function stats(ui) ui.row_begin() ui.text('leak') end");
+    run(ui, build_lw, &c, 2);
+    cui_script_eval(s, "function stats(ui, self) self.m = (self.m or 5) count = self.m end");
+    run(ui, build_lw, &c, 2);
+    CHECK(cui_script_get_number(s, "count") == 5);   /* self survived the broken frames */
+
+    /* an end without its begin is refused */
+    cui_script_eval(s, "function stats(ui) ui.text('x') ui.row_end() end");
+    run(ui, build_lw, &c, 2);
+    CHECK(true);
+
+    /* ui.* from the console (outside any widget) is refused, the state survives */
+    cui_script_eval(s, "ui.text('sneaky')");
+    CHECK(rp_has(s, "cui_script_widget"));
+    cui_script_eval(s, "1 + 1");
+    CHECK(rp_has(s, "\n2\n"));
+
+    /* eval from inside a widget is refused too (try_eval is an app function) */
+    cui_script_set_fn(s, "try_eval", lw_eval_fn, s);
+    cui_script_eval(s, "function stats(ui) try_eval('x = 9') end");
+    run(ui, build_lw, &c, 2);
+    CHECK(cui_script_get_number(s, "x") == 0);
+
+    /* the text field: typed text lands in self, external assignment overwrites */
+    cui_script_eval(s, "function stats(ui, self)"
+        " self.who = ui.textfield('who', ext or self.who or '') who = self.who end");
+    run(ui, build_lw, &c, 2);
+    cui_push_id(ui, "w"); cui_id fid = cui_make_id(ui, "who"); cui_pop_id(ui);
+    cui_rect fr = rect_of(ui, fid);
+    CHECK(fr.w > 0 && fr.h > 0);
+    click_at(ui, build_lw, &c, fr.x + 6, fr.y + fr.h / 2);        /* focus */
+    cui_input_text(ui, "ada");
+    run(ui, build_lw, &c, 2);
+    const char *who = cui_script_get_string(s, "who");
+    CHECK(who && strcmp(who, "ada") == 0);
+    cui_script_eval(s, "ext = 'grace'");
+    run(ui, build_lw, &c, 2);
+    who = cui_script_get_string(s, "who");
+    CHECK(who && strcmp(who, "grace") == 0);
+    cui_script_eval(s, "ext = nil");
+
+    /* a widget with a different id gets its own self table */
+    cui_script_eval(s, "function other(ui, self) if not self.v then self.v = 42 end count = self.v end");
+    c.fn = "other"; c.wid = "w2";
+    run(ui, build_lw, &c, 2);
+    CHECK(cui_script_get_number(s, "count") == 42);
+    c.fn = "stats"; c.wid = "w";                                    /* the first self is untouched */
+#else
+    printf("lua widgets: skipped (built without CUI_LUA)\n");
+#endif
+}
+
 static void test_emoji(void) {
     printf("emoji: list, search, tones, recent, keys, clicks, font tables\n");
     cui_ctx *ui = new_ctx();
@@ -7276,6 +7389,7 @@ int main(void) {
     test_files();
     test_terminal();
     test_repl();
+    test_lua_widget();
     test_emoji();
     test_atlas_shrink();
     test_sw_incremental();
