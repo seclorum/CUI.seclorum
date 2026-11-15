@@ -294,7 +294,7 @@ static void cui__paint_spinner(cui_ctx *ui, cui_node *n, void *data) {
     cui__draw_spinner(ui, ctr, r - 1.0f, CUI_MAX(1.5f, r * 0.22f), c);
 }
 
-static void cui__spinner_node(cui_ctx *ui, float size, cui_color c) {
+void cui__spinner_node(cui_ctx *ui, float size, cui_color c) {
     int i = cui__leaf(ui, 0, CUI_PX(size), CUI_PX(size));
     cui_color *d = cui__frame_alloc(ui, sizeof(cui_color));
     *d = c;
@@ -339,12 +339,12 @@ cui_id cui__position_id(cui_ctx *ui, uint32_t salt) {
     return cui__hash(key, sizeof key, salt);
 }
 
-static bool cui__button_impl(cui_ctx *ui, const char *label, const char *icon_only, const cui_button_opts *o) {
+/** Use the caller's ID for both input and visual state. Draw icon-only glyphs
+ * directly so a confirmation check can replace the old glyph immediately. */
+static bool cui__button_impl(cui_ctx *ui, cui_id id, const char *label, const char *icon_only, const cui_button_opts *o) {
     cui_button_opts d;
     memset(&d, 0, sizeof d);
     if (!o) o = &d;
-    cui_id id = cui_make_id(ui, icon_only ? (o->tooltip ? o->tooltip : icon_only) : label);
-    if (icon_only && o->tooltip) id = cui__hash_str(icon_only, id);
     bool disabled = o->disabled || cui_is_disabled(ui);
     cui_push_disabled(ui, disabled);
     cui_interact r = cui__interact(ui, id, CUI_IF_FOCUSABLE);
@@ -369,7 +369,6 @@ static bool cui__button_impl(cui_ctx *ui, const char *label, const char *icon_on
     float pad = o->size == CUI_SIZE_SM ? 11 : o->size == CUI_SIZE_LG ? 18 : 14;
     if (v == CUI_BUTTON_LINK) pad = 2;
 
-    cui_id swap_id = id ^ 0x1C05A9u;   /* per button: positions repeat across unnamed containers */
     int i = cui__node_new(ui, id);
     cui_node *n = &ui->nodes[i];
     n->dir = CUI_ROW;
@@ -406,9 +405,9 @@ static bool cui__button_impl(cui_ctx *ui, const char *label, const char *icon_on
     if (r.hovered) cui__set_cursor(ui, CUI_CURSOR_HAND);
     if (disabled && ui->hot == id) cui__set_cursor(ui, CUI_CURSOR_NOT_ALLOWED);
     cui__open(ui, i);
-    const char *icon = icon_only ? icon_only : o->icon;
     if (o->loading) cui__spinner_node(ui, icon_size - 2, col.fg);
-    else if (icon) cui__icon_swap(ui, swap_id, icon, icon_size, col.fg);
+    else if (icon_only) cui__icon_node(ui, icon_only, icon_size, col.fg);
+    else if (o->icon) cui__icon_swap(ui, id ^ 0x1C05A9u, o->icon, icon_size, col.fg);
     if (!icon_only && label && cui__display_len(label) > 0) {
         cui__label_text(ui, label, CUI_FONT_MEDIUM, cui__fs(ui, fs), col.fg);
     }
@@ -433,11 +432,20 @@ static bool cui__button_impl(cui_ctx *ui, const char *label, const char *icon_on
 }
 
 bool cui_button_ex(cui_ctx *ui, const char *label, const cui_button_opts *o) {
-    return cui__button_impl(ui, label, NULL, o);
+    return cui__button_impl(ui, cui_make_id(ui, label), label, NULL, o);
 }
 
+bool cui__icon_button_id(cui_ctx *ui, cui_id id, const char *icon, const cui_button_opts *o) {
+    return cui__button_impl(ui, id, NULL, icon, o);
+}
+
+/** Include both the icon and tooltip in the ID so two buttons in the same
+ * scope can share either one and still be distinguishable. */
 bool cui_icon_button_ex(cui_ctx *ui, const char *icon, const cui_button_opts *o) {
-    return cui__button_impl(ui, NULL, icon, o);
+    const char *tooltip = icon && o ? o->tooltip : NULL;
+    cui_id id = cui_make_id(ui, tooltip ? tooltip : icon);
+    if (tooltip) id = cui__hash_str(icon, id);
+    return cui__icon_button_id(ui, id, icon, o);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -489,7 +497,7 @@ static cui_color cui__name_tone(cui_ctx *ui, const char *name) {
     return tones[h % 7];
 }
 
-static int cui__initials(const char *name, char *out) {
+int cui__initials(const char *name, char *out) {
     int n = 0;
     bool word_start = true;
     for (const char *p = name; p && *p && n < 8; p++) {
@@ -669,18 +677,64 @@ void cui_card_end(cui_ctx *ui) { cui__close(ui); }
 /* Feedback                                                                 */
 /* ------------------------------------------------------------------------ */
 
-void cui_spinner(cui_ctx *ui, float size) {
+void (cui_spinner)(cui_ctx *ui, float size) {
     cui__spinner_node(ui, size > 0 ? size : 20, CUI_C(ui, TEXT_SECONDARY));
 }
 
-typedef struct { float value; bool indeterminate; cui_color track, fill; double time; } cui__progress_paint;
+typedef struct { float value; bool indeterminate, dither; cui_color track, fill; double time; float drift; } cui__progress_paint;
+
+#define CUI__DITHER_FALL 60.0f       /* points past the edge of a dither progress fill where the dots thin out */
+#define CUI__DITHER_DRIFT 10.0f      /* cells a second the pattern moves forward */
+
+/* The dither progress bar: solid up to the value, then dots that thin out over CUI__DITHER_FALL,
+ * drifting forward; indeterminate, a gaussian band of dots sweeping the track. */
+static void cui__paint_progress_dither(cui_ctx *ui, cui_node *n, const cui__progress_paint *p) {
+    cui_rect r = n->rect;
+    float rad = r.h * 0.5f;
+    cui__dither d;
+    memset(&d, 0, sizeof d);
+    d.color = p->fill;
+    d.origin = (cui_vec2){ r.x, r.y };
+    d.shape = r;
+    d.radius = CUI_CORNERS(rad);
+    if (p->indeterminate) {
+        /* the band's center runs from a quarter width before the track to a quarter after it */
+        float c = ui->theme.motion > 0 ? r.x + r.w * ((float)fmod(p->time * 0.42, 1.5) - 0.25f) : r.x + r.w * 0.5f;
+        if (n->rtl) c = r.x + r.w - (c - r.x);
+        float sigma = CUI_MIN(110.0f, r.w * 0.22f), reach = 1.8f * sigma;
+        enum { SEGS = 24 };
+        float prev = 0;
+        for (int i = 0; i <= SEGS; i++) {
+            float x = c - reach + 2 * reach * (float)i / SEGS, u = (x - c) / sigma;
+            float k = CUI_MIN(1.0f, 1.08f * expf(-1.6f * u * u));
+            float x0 = x - 2 * reach / SEGS;   /* the shape cut keeps the dots on the track */
+            if (i > 0 && x > r.x && x0 < r.x + r.w) cui__draw_dither_rect(ui, &d, (cui_rect){ x0, r.y, x - x0, r.h }, prev, k, false);
+            prev = k;
+        }
+        if (ui->theme.motion > 0) ui->animating = true;
+        return;
+    }
+    if (p->value <= 0) return;
+    /* the solid part ends on a whole dot, so the dissolve starts on the grid */
+    float cell = 2, e = roundf(r.w * cui__clampf(p->value, 0, 1) / cell) * cell;
+    float peak = cui__clampf(p->value * 20, 0, 1);   /* the dots grow in over the first 5% instead of showing at 0 */
+    d.phase.x = n->rtl ? p->drift : -p->drift;
+    if (!n->rtl) {
+        cui__draw_dither_rect(ui, &d, (cui_rect){ r.x, r.y, e, r.h }, 1, 1, false);
+        cui__draw_dither_rect(ui, &d, (cui_rect){ r.x + e, r.y, CUI__DITHER_FALL, r.h }, peak, 0, false);
+    } else {
+        cui__draw_dither_rect(ui, &d, (cui_rect){ r.x + r.w - e, r.y, e, r.h }, 1, 1, false);
+        cui__draw_dither_rect(ui, &d, (cui_rect){ r.x + r.w - e - CUI__DITHER_FALL, r.y, CUI__DITHER_FALL, r.h }, 0, peak, false);
+    }
+}
 
 static void cui__paint_progress(cui_ctx *ui, cui_node *n, void *data) {
     cui__progress_paint *p = data;
     cui_rect r = n->rect;
     float rad = r.h * 0.5f;
     cui_draw_rect(ui, r, CUI_CORNERS(rad), p->track);
-    if (p->indeterminate) {
+    if (p->dither) cui__paint_progress_dither(ui, n, p);
+    else if (p->indeterminate) {
         float t = (float)fmod(p->time * 0.75, 1.0);
         float w = r.w * 0.35f;
         float x = r.x - w + (r.w + w) * (t * t * (3 - 2 * t));
@@ -723,7 +777,7 @@ void cui_progress_ex(cui_ctx *ui, float value, const cui_progress_opts *o) {
         }
         cui__close(ui);
     }
-    float h = o->height > 0 ? o->height : 6;
+    float h = o->height > 0 ? o->height : o->dither ? 8 : 6;
     int i = cui__leaf(ui, 0, col ? CUI_FILL : (o->width.kind ? o->width : CUI_FILL), CUI_PX(h));
     /* full width bars stretch; a bar with its own width centers in a row like its siblings */
     ui->nodes[i].self_align = (!col && o->width.kind) ? CUI__ALIGN_NOSTRETCH : CUI_ALIGN_STRETCH;
@@ -733,20 +787,75 @@ void cui_progress_ex(cui_ctx *ui, float value, const cui_progress_opts *o) {
     p->time = ui->time;
     p->track = CUI_C(ui, CONTROL_TRACK);
     p->fill = o->tone ? cui__tone_color(ui, o->tone) : CUI_C(ui, CONTROL_ON);
+    p->dither = o->dither;
+    if (o->dither) {
+        if (!o->tone) p->fill = cui__emphasis(ui);
+        /* the drift steps a whole cell at a time, so it needs a frame only on each step */
+        bool drifting = !o->indeterminate && ui->theme.motion > 0 && shown > 0 && shown < 1;
+        double steps = floor(ui->time * CUI__DITHER_DRIFT);
+        p->drift = drifting ? (float)fmod(steps, 8.0) : 0;   /* the pattern repeats every 8 cells */
+        if (drifting) cui__wakeup_after(ui, (float)((steps + 1) / CUI__DITHER_DRIFT - ui->time));
+    }
     ui->nodes[i].paint = cui__paint_progress;
     ui->nodes[i].paint_data = p;
     if (col) cui__close(ui);
 }
 
-typedef struct { double time; cui_color base, shine; } cui__skel_paint;
+#define CUI__SKEL_DITHER_FPS 20.0f   /* steps a second of the dither sheen: two cells a step */
+#define CUI__SKEL_DITHER_SPEED 42.0f /* cells a second the dither sheen travels */
+
+/* a skeleton group: its placeholders share one sweep across the group's rectangle, recorded
+ * when the group paints (before its children) */
+typedef struct cui__skel_group {
+    struct cui__skel_group *prev;
+    cui_rect rect;
+    bool dither;
+    float t;                   /* the dither sheen's time, in steps */
+    float wake;                /* seconds to its next step; 0 when it holds still */
+} cui__skel_group;
+
+typedef struct { double time; cui_color base, shine; cui__skel_group *group; } cui__skel_paint;
+
+/* the placeholder in dots: a solid base of cells, and a diagonal band of brighter cells
+ * travelling over the whole group, the same grid for every placeholder in it */
+static void cui__paint_skeleton_dither(cui_ctx *ui, cui_rect r, cui_corners radius, const cui__skel_paint *p) {
+    const cui__skel_group *g = p->group;
+    const float cell = 2;
+    cui__dither d;
+    memset(&d, 0, sizeof d);
+    d.cell = cell;
+    d.origin = (cui_vec2){ g->rect.x, g->rect.y };
+    d.shape = r;
+    d.radius = radius;
+    d.color = p->base;
+    cui__draw_dither_rect(ui, &d, r, 1, 1, false);
+    int i0 = (int)floorf((r.x - g->rect.x) / cell), j0 = (int)floorf((r.y - g->rect.y) / cell);
+    int cols = (int)ceilf((r.x + r.w - g->rect.x) / cell) - i0, rows = (int)ceilf((r.y + r.h - g->rect.y) / cell) - j0;
+    if (cols <= 0 || rows <= 0 || cols * rows > 65536) return;
+    float wide = g->rect.w / cell;
+    /* the band's middle runs from 30 cells before the group to 30 after it; held, it rests a third of the way in */
+    float sweep = ui->theme.motion > 0 ? fmodf(g->t * CUI__SKEL_DITHER_SPEED, wide + 60) - 30 : wide * 0.35f;
+    float *v = cui__frame_alloc(ui, sizeof(float) * (size_t)(cols * rows));
+    for (int j = 0; j < rows; j++)
+        for (int i = 0; i < cols; i++) {
+            float u = ((i0 + i) + (j0 + j) * 0.6f - sweep) / 9;
+            v[j * cols + i] = expf(-u * u) * 0.95f;
+        }
+    d.color = p->shine;
+    cui__draw_dither_cells(ui, &d, i0, j0, cols, rows, v);
+}
+
 static void cui__paint_skeleton(cui_ctx *ui, cui_node *n, void *data) {
     cui__skel_paint *p = data;
     cui_rect r = n->rect;
+    if (p->group && p->group->dither) { cui__paint_skeleton_dither(ui, r, n->radius, p); return; }
     cui_draw_rect(ui, r, n->radius, p->base);
     if (ui->theme.motion > 0) {
+        /* in a group the shine sweeps the group, so it passes over its placeholders together */
+        cui_rect span = p->group ? p->group->rect : r;
         float t = (float)fmod(p->time / 1.6, 1.0);
-        float w = CUI_MAX(80.0f, r.w * 0.4f);
-        float x = r.x - w + (r.w + 2 * w) * t;
+        float w = CUI_MAX(80.0f, span.w * 0.4f);
+        float x = span.x - w + (span.w + 2 * w) * t;
         cui_push_clip(ui, r);
         cui_cvert v[6];
         cui_color clear = p->shine; clear.a = 0;
@@ -769,8 +878,46 @@ void cui_skeleton(cui_ctx *ui, cui_size width, float height) {
     p->time = ui->time;
     p->base = CUI_C(ui, ACTIVE);
     p->shine = cui_alpha(CUI_C(ui, FOREGROUND), ui->mode == CUI_THEME_DARK ? 0.06f : 0.05f);
+    p->group = ui->building.skeleton;
+    if (p->group && p->group->dither) p->shine = cui_alpha(CUI_C(ui, FOREGROUND), 0.14f);
     n->paint = cui__paint_skeleton;
     n->paint_data = p;
+}
+
+/* the group records where it is for its placeholders, and asks for the sheen's next step */
+static void cui__paint_skeleton_group(cui_ctx *ui, cui_node *n, void *data) {
+    cui__skel_group *g = data;
+    g->rect = n->rect;
+    if (g->wake > 0) cui__wakeup_after(ui, g->wake);
+}
+
+void cui_skeleton_group_begin_ex(cui_ctx *ui, const cui_skeleton_group_opts *o) {
+    cui_skeleton_group_opts d;
+    memset(&d, 0, sizeof d);
+    if (!o) o = &d;
+    cui__skel_group *g = cui__frame_alloc(ui, sizeof *g);
+    memset(g, 0, sizeof *g);
+    g->prev = ui->building.skeleton;
+    g->dither = o->dither;
+    if (o->dither && ui->theme.motion > 0) {
+        double steps = floor(ui->time * CUI__SKEL_DITHER_FPS);
+        g->t = (float)fmod(steps / CUI__SKEL_DITHER_FPS, 3600.0);
+        g->wake = (float)((steps + 1) / CUI__SKEL_DITHER_FPS - ui->time);
+    }
+    int i = cui__node_new(ui, 0);
+    cui_node *n = &ui->nodes[i];
+    n->w = o->width.kind ? o->width : CUI_FILL;
+    n->gap = o->gap > 0 ? o->gap : 8;
+    n->paint = cui__paint_skeleton_group;
+    n->paint_data = g;
+    ui->building.skeleton = g;
+    cui__open(ui, i);
+}
+
+void cui_skeleton_group_end(cui_ctx *ui) {
+    cui__skel_group *g = ui->building.skeleton;
+    if (g) ui->building.skeleton = g->prev;
+    cui__close(ui);
 }
 
 typedef struct { bool dismissed; float t; } cui__alert_state;
@@ -1021,6 +1168,7 @@ cui_canvas_result cui_canvas(cui_ctx *ui, const char *id_str, cui_size w, cui_si
 
 #define CUI__BAR_ZONE 12.0f
 
+/** Open a scroll area and consume only the wheel axes the area can use. */
 int cui__scroll_begin_ex(cui_ctx *ui, cui_id id, const cui_box *box, bool horizontal) {
     cui_scroll_state *st = cui_state(ui, id, sizeof *st);
     cui_rect pr = cui__prev_rect(ui, id);
@@ -1029,11 +1177,19 @@ int cui__scroll_begin_ex(cui_ctx *ui, cui_id id, const cui_box *box, bool horizo
     if (ui->scroll_target == id && (ui->scroll_dy != 0 || ui->scroll_dx != 0)) {
         float line = 44;
         float dy = ui->scroll_dy, dx = ui->scroll_dx;
-        if ((ui->mods & CUI_MOD_SHIFT) && horizontal && dx == 0) { dx = dy; dy = 0; }
-        if (max_y > 0) st->ty -= dy * line;
-        if (horizontal && max_x > 0) st->tx -= dx * line;
-        st->last_activity = ui->time;
-        ui->scroll_dy = ui->scroll_dx = 0;   /* consumed */
+        bool sideways = (ui->mods & CUI_MOD_SHIFT) && horizontal && dx == 0;
+        if (sideways) { dx = dy; dy = 0; }
+        if (dy != 0 && max_y > 0) {
+            st->ty -= dy * line;
+            st->last_activity = ui->time;
+            ui->scroll_dy = 0;
+        }
+        if (dx != 0 && horizontal && max_x > 0) {
+            st->tx -= dx * line;
+            st->last_activity = ui->time;
+            if (sideways) ui->scroll_dy = 0;
+            else ui->scroll_dx = 0;
+        }
     }
     /* scrollbar dragging */
     cui_id bar_id = id ^ 0x5C5C5C5Cu;
@@ -1199,6 +1355,7 @@ static void cui__paint_split(cui_ctx *ui, cui_node *n, void *data) {
     ((cui__split_state *)data)->rtl = n->rtl;
 }
 
+/** Open a split with pane minimums that can fit the available main axis. */
 void cui_split_begin(cui_ctx *ui, const char *id_str, float *ratio, const cui_split_opts *o) {
     cui_split_opts d;
     memset(&d, 0, sizeof d);
@@ -1215,10 +1372,18 @@ void cui_split_begin(cui_ctx *ui, const char *id_str, float *ratio, const cui_sp
     cui_interact r = cui__interact(ui, hid, CUI_IF_DRAG);
     cui__split_state *st = cui_state(ui, hid, sizeof *st);
     float total = o->vertical ? pr.h : pr.w;
-    if (r.active && ui->mdown[0] && total > 0) {
+    cui_size extent = o->vertical ? o->height : o->width;
+    if (extent.kind == CUI_SIZE_FIXED) total = extent.value;
+    float available = CUI_MAX(0, total - 1);   /* the divider takes one point */
+    if ((total > 0 || extent.kind == CUI_SIZE_FIXED) && b->min1 + b->min2 > available) {
+        float fraction = b->min1 / (b->min1 + b->min2);
+        b->min1 = available * fraction;
+        b->min2 = available - b->min1;
+    }
+    if (r.active && ui->mdown[0] && available > 0) {
         float pos = o->vertical ? ui->my - pr.y : st->rtl ? pr.x + pr.w - ui->mx : ui->mx - pr.x;
-        pos = cui__clampf(pos, b->min1, total - b->min2);
-        *ratio = pos / total;
+        pos = cui__clampf(pos, b->min1, CUI_MAX(b->min1, available - b->min2));
+        *ratio = pos / available;
     }
     if (r.hovered || r.active) cui__set_cursor(ui, o->vertical ? CUI_CURSOR_RESIZE_NS : CUI_CURSOR_RESIZE_EW);
     cui__tween(ui, &st->hover, (r.hovered || r.active) ? 1.0f : 0.0f, CUI__T_HOVER);
