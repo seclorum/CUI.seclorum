@@ -52,6 +52,14 @@ typedef struct cui_app_desc {
     cui_theme_mode theme;
     cui_accent accent;
     bool follow_system_theme;   /* use the OS light/dark setting where available */
+    /* Linux: the app's ID, which is the name of its .desktop file without
+     * ".desktop", e.g. "org.example.Notes". The desktop uses it to show the
+     * app's name and icon for the window (taskbar, dock, Alt+Tab) and to group
+     * its windows. Sets WM_CLASS on X11 and the app_id on Wayland (SDL2, and
+     * GLFW 3.4). Read when the window is created; ignored on Windows and
+     * macOS. Default: none (the X11 backend then sets WM_CLASS to the title
+     * and "CUI"). */
+    const char *app_id;
 } cui_app_desc;
 
 CUI_API cui_app *cui_app_create(const cui_app_desc *desc);
@@ -74,6 +82,16 @@ CUI_API void cui_app_set_title(cui_app *app, const char *title);
 /* The window's size in logical points (the same units as cui_app_desc.width). */
 CUI_API void cui_app_set_size(cui_app *app, int width, int height);
 CUI_API cui_vec2 cui_app_size(cui_app *app);
+/* Maximizes the window on its display, as the title bar's maximize button does. NULL means the
+ * running app, so a cui_app_run callback can call it on its first frame; with the loop form it is
+ * fine right after cui_app_create. Nothing happens for a fixed-size window or where the window
+ * manager does not support it (an X11 window manager without EWMH). */
+CUI_API void cui_app_maximize(cui_app *app);
+/* Starts or stops following the OS light/dark setting, as cui_app_desc.follow_system_theme
+ * does at creation, for a theme switcher with Light, Dark and System. Starting applies the
+ * OS setting at once, where the platform reports one. Stopping keeps the current theme, so
+ * a cui_set_theme after it lasts. Later OS changes are followed on Windows and macOS. */
+CUI_API void cui_app_follow_system_theme(cui_app *app, bool follow);
 /* True when the software renderer is drawing (no usable OpenGL, or it was asked for). */
 CUI_API bool cui_app_is_software(cui_app *app);
 /* HWND, NSWindow*, X11 Window (cast to uintptr_t), SDL_Window* or GLFWwindow*. */

@@ -27,6 +27,7 @@ cui_app *cui_app_create(const cui_app_desc *desc) {
     if (!d->title) d->title = "CUI";
     snprintf(app->title, sizeof app->title, "%s", d->title);
     d->title = app->title;
+    if (d->app_id && !d->app_id[0]) d->app_id = NULL;
     if (d->width <= 0) d->width = 1080;
     if (d->height <= 0) d->height = 720;
     if (d->min_width <= 0) d->min_width = 360;
@@ -132,6 +133,15 @@ void cui_app_set_title(cui_app *app, const char *title) {
 }
 
 void cui_app_set_size(cui_app *app, int w, int h) { app = cui__app_or_current(app); if (app) cui__plat_set_size(app, w, h); }
+
+void cui_app_follow_system_theme(cui_app *app, bool follow) {
+    app = cui__app_or_current(app);
+    if (!app) return;
+    app->desc.follow_system_theme = follow;    /* the backends read it when the OS setting changes */
+    if (!follow) return;
+    int dark = cui__plat_system_dark();
+    if (dark >= 0) cui_set_theme(app->ui, dark ? CUI_THEME_DARK : CUI_THEME_LIGHT);
+}
 
 cui_vec2 cui_app_size(cui_app *app) {
     float w, h, s;
@@ -320,3 +330,9 @@ bool cui_app_file_dialog(cui_app *app, const cui_file_dialog_opts *opts, char *o
 
 bool cui_app_open_url(const char *url) { return url && *url && cui__plat_open_url(url); }
 
+void cui_app_maximize(cui_app *app) {
+    app = cui__app_or_current(app);
+    /* a fixed-size window has no maximized state: on Win32 its borders are gone, and other
+     * backends would still grow it */
+    if (app && !app->desc.fixed_size) cui__plat_maximize(app);
+}

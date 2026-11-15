@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 project(cui
-    VERSION 1.3.1
+    VERSION 1.4.0
     DESCRIPTION "Modern native UI components for C"
     LANGUAGES C)
 
@@ -44,6 +44,7 @@ set(CUI_CORE_SOURCES
     src/cui_actions.c
     src/cui_pickers.c
     src/cui_disclosure.c
+    src/cui_loading.c
     src/cui_grid.c
     src/cui_treetable.c
     src/cui_code.c
@@ -60,6 +61,7 @@ set(CUI_CORE_SOURCES
     src/cui_viz.c
     src/cui_motion.c
     src/cui_ai.c
+    src/cui_voice.c
     src/cui_image.c
     src/cui_nodes.c
     src/cui_flame.c
@@ -74,8 +76,10 @@ set(CUI_CORE_SOURCES
     src/cui_regex.c
     src/cui_devviews.c
     src/cui_instrument.c
+    src/cui_canvas.c
     src/cui_tour.c
     src/cui_photo.c
+    src/cui_creative.c
     src/cui_files.c
     src/cui_terminal.c
     src/cui_repl.c
@@ -219,7 +223,9 @@ elseif(CUI_BACKEND STREQUAL "glfw")
     target_link_libraries(cui PUBLIC glfw)
 endif()
 
-set_target_properties(cui PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
+# A minor release adds fields to option and description structs, which changes their size, so a
+# shared library is only compatible within one minor version: libcui.so.1.3, libcui.so.1.4...
+set_target_properties(cui PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
 
 if(CUI_BUILD_EXAMPLES AND CUI_WITH_APP)
     add_subdirectory(examples)

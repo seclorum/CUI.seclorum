@@ -13,7 +13,7 @@
 
 @class CUIView;
 
-@interface CUIPlat : NSObject <NSWindowDelegate>
+@interface CUIPlat : NSObject <NSWindowDelegate, NSApplicationDelegate>
 @property (nonatomic, strong) NSWindow *window;
 @property (nonatomic, strong) CUIView *view;
 @property (nonatomic, strong) NSOpenGLContext *gl;
@@ -85,6 +85,7 @@ static cui_key cui__mac_key(NSEvent *e) {
 @interface CUIView : NSView <NSTextInputClient>
 @property (nonatomic, assign) cui_app *app;
 @property (nonatomic, strong) NSTrackingArea *tracking;
+@property (nonatomic, assign) NSRect caret;   /* the focused text field's caret in view points, for the input method */
 @end
 
 @implementation CUIView
@@ -192,14 +193,31 @@ static cui_key cui__mac_key(NSEvent *e) {
 - (NSArray<NSAttributedStringKey> *)validAttributesForMarkedText { return @[]; }
 - (NSRect)firstRectForCharacterRange:(NSRange)r actualRange:(NSRangePointer)a {
     (void)r; (void)a;
-    NSRect local = NSMakeRect(0, 0, 1, 1);
+    NSRect local = NSIsEmptyRect(self.caret) ? NSMakeRect(0, 0, 1, 1) : self.caret;
     return [self.window convertRectToScreen:[self convertRect:local toView:nil]];
 }
 - (NSUInteger)characterIndexForPoint:(NSPoint)p { (void)p; return NSNotFound; }
 @end
 
+/* An empty application-defined event, posted to end a wait in nextEventMatchingMask:
+ * that has no event of its own to return (a quit from the Dock or by Apple event). */
+static void cui__mac_wake(void) {
+    NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+                                      timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0];
+    [NSApp postEvent:wake atStart:NO];
+}
+
 @implementation CUIPlat
 - (BOOL)windowShouldClose:(NSWindow *)w { (void)w; self.app->running = false; return NO; }
+/* Quit from the menu, Cmd-Q, the Dock or AppleScript ends cui_app_run (or makes cui_app_frame
+ * return false) the way closing the window does, so the code after it runs. AppKit's default
+ * would call exit() from inside the event loop. SDL2 and GLFW answer the same way. */
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    (void)sender;
+    self.app->running = false;
+    cui__mac_wake();
+    return NSTerminateCancel;
+}
 - (void)windowDidResize:(NSNotification *)n {
     (void)n;
     if (self.gl) [self.gl update];
@@ -212,6 +230,18 @@ static cui_key cui__mac_key(NSEvent *e) {
 @end
 
 static CUIPlat *cui__p(cui_app *app) { return (__bridge CUIPlat *)app->plat; }
+
+/* CUI calls this every frame a text field has focus, with the caret in window
+ * points, top-left origin, the same space as the flipped view. The input method
+ * reads it back through firstRectForCharacterRange and is told when it moves. */
+static void cui__mac_text_input_rect(void *user, cui_rect caret) {
+    cui_app *app = user;
+    CUIView *v = cui__p(app).view;
+    NSRect r = NSMakeRect(caret.x, caret.y, caret.w < 1 ? 1 : caret.w, caret.h < 1 ? 1 : caret.h);
+    if (NSEqualRects(r, v.caret)) return;
+    v.caret = r;
+    [v.inputContext invalidateCharacterCoordinates];
+}
 
 static void cui__mac_set_cursor(void *user, cui_cursor c) {
     cui_app *app = user;
@@ -284,6 +314,7 @@ bool cui__plat_init(cui_app *app) {
         w.contentMinSize = NSMakeSize(app->desc.min_width, app->desc.min_height);
         w.acceptsMouseMovedEvents = YES;
         w.delegate = p;
+        if (!NSApp.delegate) NSApp.delegate = p;   /* an app that set its own delegate keeps it */
         cui_color bg = app->ui->theme.colors[CUI_TOKEN_BACKGROUND];
         w.backgroundColor = [NSColor colorWithSRGBRed:bg.r / 255.0 green:bg.g / 255.0 blue:bg.b / 255.0 alpha:1];
         if (@available(macOS 10.14, *)) {
@@ -305,6 +336,7 @@ bool cui__plat_init(cui_app *app) {
         pi.set_clipboard = cui__mac_set_clip;
         pi.get_clipboard = cui__mac_get_clip;
         pi.set_cursor = cui__mac_set_cursor;
+        pi.set_text_input_rect = cui__mac_text_input_rect;
         cui_set_platform(app->ui, &pi);
     }
     return true;
@@ -322,6 +354,7 @@ void cui__plat_shutdown(cui_app *app) {
     app->plat = NULL;
     if (p.gl) { [NSOpenGLContext clearCurrentContext]; p.gl = nil; }
     p.window.delegate = nil;
+    if (NSApp.delegate == p) NSApp.delegate = nil;
     [p.window close];
     p.window = nil;
     p.view = nil;
@@ -433,3 +466,10 @@ double cui__plat_refresh_hz(cui_app *app) {
 }
 
 void cui__plat_gl_release(cui_app *app) { (void)app; }   /* not used: these keep OpenGL */
+
+void cui__plat_maximize(cui_app *app) {
+    CUIPlat *p = cui__p(app);
+    if (!p || !p.window) return;
+    if (!p.window.isZoomed)
+        [p.window zoom:nil];
+}

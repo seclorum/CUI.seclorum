@@ -42,7 +42,7 @@ Or fetch a release at configure time:
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(cui GIT_REPOSITORY https://github.com/yappologistic/CUI.git GIT_TAG v1.3.1)
+FetchContent_Declare(cui GIT_REPOSITORY https://github.com/yappologistic/CUI.git GIT_TAG v1.4.0)
 FetchContent_MakeAvailable(cui)
 target_link_libraries(my_app PRIVATE cui::cui)
 cui_app_target(my_app)
@@ -79,7 +79,7 @@ For a build system other than CMake, or to vendor CUI into a large codebase, use
 
 **The includes differ.** This guide writes `#include <cui/cui.h>` and `#include <cui/cui_app.h>`. With the single-file distribution both are one header beside your code, so write `#include "cui.h"` (or `"cui_single.h"`) in their place and leave the second line out.
 
-`cui.c` is the whole library, about 74,000 lines, and takes around half a minute to compile. Compile it once and link the object file; your own files then build in a moment:
+`cui.c` is the whole library, about 78,000 lines, and takes around half a minute to compile. Compile it once and link the object file; your own files then build in a moment:
 
 ```sh
 cc -std=c99 -Os -ffunction-sections -fdata-sections -c cui.c -o cui.o                 # once
@@ -98,7 +98,7 @@ The window layer for your system is picked by the preprocessor. Before the imple
 | `CUI_WITH_APP` | `ON` | Build the window layer. Turn off to use only the core in your engine |
 | `CUI_DEFAULT_FONTS` | `ON` | Embed Inter, Geist and Lucide (about 180 KB) |
 | `CUI_STB_IMAGE` | `ON` | PNG and JPEG loading for `cui_image_load` |
-| `CUI_BUILD_SHARED` | `OFF` | Build a shared library |
+| `CUI_BUILD_SHARED` | `OFF` | Build a shared library. Its name carries the minor version (`libcui.so.1.4`), because option structs grow between minor versions: rebuild your app against the new headers when you move to a new minor version |
 | `CUI_BUILD_EXAMPLES`, `CUI_BUILD_TESTS` | `ON` at top level | |
 
 Cross compiling for Windows from Linux works with the included toolchain file:
@@ -244,6 +244,27 @@ CUI_SCREENSHOT=out.png CUI_SCREENSHOT_FRAMES=60 ./my_app
 ```
 
 For unit tests, skip the window entirely: create a context with the software renderer, feed input with `cui_input_*` and render into memory. `tests/test_main.c` shows the pattern.
+
+## Your app's name and icon on Linux
+
+Linux desktops show a window's name and icon (in the taskbar, the dock and Alt+Tab) by finding the app's `.desktop` file. Give the app an ID and name the file after it:
+
+```c
+cui_app_run(&(cui_app_desc){ .title = "Notes", .app_id = "org.example.Notes" }, frame, NULL);
+```
+
+```ini
+# ~/.local/share/applications/org.example.Notes.desktop, or /usr/share/applications/
+[Desktop Entry]
+Type=Application
+Name=Notes
+Exec=notes
+Icon=org.example.Notes
+```
+
+The icon goes in the icon theme under the same name, for example `~/.local/share/icons/hicolor/256x256/apps/org.example.Notes.png`. A Flatpak already names its desktop file and icon after its ID, so pass that ID.
+
+The ID becomes the window's `WM_CLASS` on X11, and its app ID on Wayland with the SDL2 backend or GLFW 3.4. Without an ID, the X11 backend sets `WM_CLASS` to the window title and `CUI`, so the desktop finds the right file only by chance.
 
 ## Run in the browser
 

@@ -33,8 +33,52 @@ static const char *cui__sdl_get_clip(void *user) {
     return app->clipboard;
 }
 
+#if !defined(_WIN32)
+/* Sets an environment variable for SDL_Init to read, unless the user set it.
+ * True when it was set here, so it can be removed again. */
+static bool cui__sdl_env_set(const char *name, const char *value) {
+    return value && !getenv(name) && setenv(name, value, 1) == 0;
+}
+#endif
+
+/* IME candidate window: CUI calls this every frame a text field has focus, with
+ * the caret rectangle in window points, top-left origin, so the candidate list
+ * opens at the caret instead of at a stale position. */
+static void cui__sdl_text_input_rect(void *user, cui_rect caret) {
+    (void)user;
+    SDL_Rect r;
+    r.x = (int)(caret.x + 0.5f);
+    r.y = (int)(caret.y + 0.5f);
+    r.w = (int)(caret.w + 0.5f);
+    r.h = (int)(caret.h + 0.5f);
+    if (r.w < 1) r.w = 1;
+    if (r.h < 1) r.h = 1;
+    SDL_SetTextInputRect(&r);
+    if (!SDL_IsTextInputActive()) SDL_StartTextInput();
+}
+
 bool cui__plat_init(cui_app *app) {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) return false;
+    /* The app ID becomes WM_CLASS (X11) and the app_id (Wayland). SDL2 reads it
+     * from these variables in SDL_Init, Wayland falling back to the X11 one;
+     * SDL3 under sdl2-compat reads the SDL_APP_ID hint, which SDL_Quit clears.
+     * Variables the user set win. The ones set here are removed once SDL_Init
+     * has read them, so neither a later app in this process nor a child
+     * process inherits this app's ID. */
+    if (app->desc.app_id) SDL_SetHint("SDL_APP_ID", app->desc.app_id);
+#if !defined(_WIN32)
+    bool set_x11 = cui__sdl_env_set("SDL_VIDEO_X11_WMCLASS", app->desc.app_id);
+    bool set_wayland = cui__sdl_env_set("SDL_VIDEO_WAYLAND_WMCLASS", app->desc.app_id);
+#endif
+#ifdef SDL_HINT_IME_SHOW_UI   /* SDL 2.0.20 */
+    /* the OS draws the candidate list; SDL hides it unless this hint is set */
+    SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+#endif
+    int init = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
+#if !defined(_WIN32)
+    if (set_x11) unsetenv("SDL_VIDEO_X11_WMCLASS");
+    if (set_wayland) unsetenv("SDL_VIDEO_WAYLAND_WMCLASS");
+#endif
+    if (init != 0) return false;
     cui__sdl *s = calloc(1, sizeof *s);
     if (!s) return false;
     app->plat = s;
@@ -59,6 +103,10 @@ bool cui__plat_init(cui_app *app) {
     SDL_SystemCursor ids[CUI_CURSOR_COUNT] = { SDL_SYSTEM_CURSOR_ARROW, SDL_SYSTEM_CURSOR_HAND, SDL_SYSTEM_CURSOR_IBEAM,
                                               SDL_SYSTEM_CURSOR_SIZEWE, SDL_SYSTEM_CURSOR_SIZENS, SDL_SYSTEM_CURSOR_SIZEALL, SDL_SYSTEM_CURSOR_NO };
     for (int i = 0; i < CUI_CURSOR_COUNT; i++) s->cursors[i] = SDL_CreateSystemCursor(ids[i]);
+    /* Text input stays on while the window is open, not only while a text field has
+     * focus: type-ahead in lists, trees and the file browser, the one-time code input,
+     * the hex editor and the shortcut recorder read typed characters without being a
+     * text field, and SDL delivers no SDL_TEXTINPUT while text input is off. */
     SDL_StartTextInput();
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     cui_platform_iface pi;
@@ -67,6 +115,7 @@ bool cui__plat_init(cui_app *app) {
     pi.set_cursor = cui__sdl_set_cursor;
     pi.set_clipboard = cui__sdl_set_clip;
     pi.get_clipboard = cui__sdl_get_clip;
+    pi.set_text_input_rect = cui__sdl_text_input_rect;
     cui_set_platform(app->ui, &pi);
     return true;
 }
@@ -225,10 +274,14 @@ bool cui__plat_present_part(cui_app *app, const void *bgra, int w, int h, int st
     (void)app; (void)bgra; (void)w; (void)h; (void)stride; (void)x; (void)y; (void)pw; (void)ph;
     return false;   /* the whole buffer is shown each time */
 }
-
 double cui__plat_refresh_hz(cui_app *app) {
     SDL_DisplayMode m;
     return SDL_GetWindowDisplayMode(cui__s(app)->win, &m) == 0 ? m.refresh_rate : 0;
 }
 
 void cui__plat_gl_release(cui_app *app) { (void)app; }   /* not used: these keep OpenGL */
+
+void cui__plat_maximize(cui_app *app) {
+    cui__sdl *s = cui__s(app);
+    if (s && s->win) SDL_MaximizeWindow(s->win);
+}

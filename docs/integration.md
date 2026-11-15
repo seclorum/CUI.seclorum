@@ -62,6 +62,8 @@ cui_set_platform(ui, &(cui_platform_iface){
 });
 ```
 
+CUI calls `set_text_input_rect` every frame a text field has focus, with the caret in window points (top-left origin, one line tall). Place the input method's composition and candidate windows there; the built-in Win32, Cocoa, X11 and SDL2 backends and the docs site do.
+
 Useful queries for your app: `cui_wants_keyboard` (a text field has focus), `cui_wants_mouse` (the pointer is over the UI), `cui_get_cursor`.
 
 ## Using the built-in backends with your loop
@@ -132,12 +134,12 @@ CUI is built to stay small. Measured with GCC, `-DCMAKE_BUILD_TYPE=MinSizeRel`, 
 
 | | Size |
 |---|---|
-| Whole library (about 190 components, both renderers, X11 backend, fonts) | about 1,050 KB |
+| Whole library (about 210 components, both renderers, X11 backend, fonts) | about 1,130 KB |
 | of which embedded fonts (Inter, Geist, Geist Mono, 168 Lucide icons) | 95 KB, compressed |
 | `examples/hello` on Linux, whole executable | about 250 KB |
 | `examples/hello.exe` on Windows (MinGW, linked with `-flto`), whole executable | about 300 KB |
-| `examples/assistant`, an AI chat app | about 350 KB |
-| `examples/gallery`, every component in use | about 1,010 KB |
+| `examples/assistant`, an AI chat app | about 360 KB |
+| `examples/gallery`, every component in use | about 1,140 KB |
 
 What keeps it small:
 

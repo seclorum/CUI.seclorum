@@ -60,9 +60,9 @@ void cui_chat_message_ex(cui_ctx *ui, const char *text, const cui_chat_opts *o) 
     int bubble = cui__node_new(ui, 0);
     cui_node *bn = &ui->nodes[bubble];
     bn->pad[0] = bn->pad[2] = 8; bn->pad[1] = bn->pad[3] = 13;
-    float big = 18, small = 6;
-    if (o->mine) bn->radius = (cui_corners){ big, o->grouped ? small : big, o->last_in_group ? big : small, big };
-    else bn->radius = (cui_corners){ o->grouped ? small : big, big, big, o->last_in_group ? big : small };
+    float corner = 18, tight = 6;   /* not "small": the Windows SDK defines it as a macro */
+    if (o->mine) bn->radius = (cui_corners){ corner, o->grouped ? tight : corner, o->last_in_group ? corner : tight, corner };
+    else bn->radius = (cui_corners){ o->grouped ? tight : corner, corner, corner, o->last_in_group ? corner : tight };
     if (o->mine) bn->bg = cui__accent_bg(ui);
     else bn->bg = ui->mode == CUI_THEME_DARK ? cui_mix(CUI_C(ui, SURFACE), CUI_C(ui, FOREGROUND), 0.08f) : CUI_C(ui, SURFACE_MUTED);
     cui__open(ui, bubble);
@@ -121,6 +121,7 @@ static void cui__paint_typing(cui_ctx *ui, cui_node *n, void *data) {
     }
 }
 
+/** Draw typing dots that hold still when motion is reduced. */
 void cui_typing_indicator(cui_ctx *ui, const char *name) {
     int row = cui__node_new(ui, 0);
     ui->nodes[row].dir = CUI_ROW; ui->nodes[row].gap = 8; ui->nodes[row].align = CUI_ALIGN_END; ui->nodes[row].pad[0] = 8;
@@ -137,7 +138,9 @@ void cui_typing_indicator(cui_ctx *ui, const char *name) {
     cui__open(ui, bubble);
     int dots = cui__leaf(ui, 0, CUI_PX(28), CUI_PX(12));
     cui__dots_paint *p = cui__frame_alloc(ui, sizeof *p);
-    p->time = ui->time; p->c = CUI_C(ui, TEXT_SECONDARY);
+    bool motion = ui->theme.motion > 0;
+    p->time = motion ? ui->time : 0;
+    p->c = CUI_C(ui, TEXT_SECONDARY);
     ui->nodes[dots].paint = cui__paint_typing;
     ui->nodes[dots].paint_data = p;
     cui__close(ui);
@@ -147,7 +150,7 @@ void cui_typing_indicator(cui_ctx *ui, const char *name) {
         ui->nodes[t].self_align = CUI_ALIGN_CENTER;
     }
     cui__close(ui);
-    ui->animating = true;
+    if (motion) ui->animating = true;
 }
 
 /* ------------------------------------------------------------------------ */
