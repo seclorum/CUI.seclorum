@@ -258,6 +258,53 @@ typedef enum cui_cursor {
     CUI_CURSOR_RESIZE_NS, CUI_CURSOR_MOVE, CUI_CURSOR_NOT_ALLOWED, CUI_CURSOR_COUNT
 } cui_cursor;
 
+/* Optional application-owned input capture, before legacy aggregation.
+ * Runs synchronously on the UI thread. Event and text storage are borrowed
+ * only during the callback. true consumes the event; false preserves the
+ * existing widget behavior. No UI construction or input injection is allowed
+ * inside the callback. Copy retained text. Unregister before freeing user.
+ * To replay captured input, unregister, call the existing cui_input_* entry
+ * points, then register again. Legacy replay retains existing text-size limits.
+ * The caller owns queue limits and error policy.
+ * Key events preserve each call, including repeated down and modifier-only
+ * CUI_KEY_NONE events. File drops are not intercepted by this interface. */
+typedef enum cui_input_event_kind {
+    CUI_INPUT_MOUSE_MOVE, CUI_INPUT_MOUSE_BUTTON, CUI_INPUT_MOUSE_LEAVE,
+    CUI_INPUT_SCROLL, CUI_INPUT_KEY, CUI_INPUT_TEXT, CUI_INPUT_FOCUS
+} cui_input_event_kind;
+typedef struct cui_input_event {
+    cui_input_event_kind kind;
+    cui_vec2 position;          /* mouse move only */
+    cui_vec2 delta;             /* scroll only, same units as cui_input_scroll */
+    cui_mouse_button button;   /* mouse button only */
+    cui_key key;               /* key only */
+    int mods;                  /* key only; track modifier-only events too */
+    bool down;                 /* key/button only */
+    bool focused;              /* window focus only */
+    const char *text;          /* text only; NUL terminated, borrowed */
+} cui_input_event;
+typedef bool (*cui_input_hook_fn)(cui_ctx *ui, const cui_input_event *event, void *user);
+/* NULL unregisters. Install before input delivery; do not change inside hook. */
+CUI_API void cui_set_input_hook(cui_ctx *ui, cui_input_hook_fn hook, void *user);
+
+/* Dispatch one captured KEY, TEXT or FOCUS event after begin_frame and before
+ * component submission. Unregister capture while dispatching. Physical key and
+ * modifier state updates before route; true stops actions, not bookkeeping.
+ * False permits CUI defaults, including Tab traversal after refusal. A handled
+ * down cannot drive default held actions until release. Inactive input updates
+ * physical state only; FOCUS still calls route for lifecycle notification.
+ * Route and text are borrowed synchronously. Do not construct UI, recurse,
+ * inject input, or change the hook inside route. The host owns command types,
+ * key maps, fallback scopes, queueing and any required reconciliation passes.
+ * A handled key does not suppress separately delivered committed text.
+ * Existing input entry points keep their legacy behavior for opt-out callers. */
+typedef bool (*cui_input_route_fn)(cui_ctx *ui, void *user, const cui_input_event *event);
+CUI_API void cui_dispatch_input(cui_ctx *ui, const cui_input_event *event, cui_input_route_fn route, void *user);
+/* Valid inside route: whether this key-down repeats a physical held key. */
+CUI_API bool cui_input_repeated(cui_ctx *ui);
+/* Held state eligible for default actions. cui_key_down remains physical state. */
+CUI_API bool cui_key_action_down(cui_ctx *ui, cui_key key);
+
 CUI_API void cui_input_mouse_move(cui_ctx *ui, float x, float y);
 CUI_API void cui_input_mouse_button(cui_ctx *ui, cui_mouse_button button, bool down);
 CUI_API void cui_input_mouse_leave(cui_ctx *ui);
@@ -286,6 +333,10 @@ typedef struct cui_platform_iface {
     bool (*draw_emoji)(void *user, const char *utf8, int len, int px, unsigned char *rgba);
 } cui_platform_iface;
 CUI_API void cui_set_platform(cui_ctx *ui, const cui_platform_iface *platform);
+/* Request a cursor during component submission or painting. The last request
+ * wins. At end of frame the platform hook receives it; the next frame starts
+ * with CUI_CURSOR_ARROW. */
+CUI_API void cui_set_cursor(cui_ctx *ui, cui_cursor cursor);
 CUI_API cui_cursor cui_get_cursor(cui_ctx *ui);
 /* The system clipboard, for a menu or status bar item that copies or pastes ("Copy path").
  * They go through the platform's clipboard hooks, as the copy button and text fields do:
@@ -512,6 +563,12 @@ CUI_API bool cui_last_hovered(cui_ctx *ui);
 CUI_API bool cui_is_disabled(cui_ctx *ui);
 CUI_API void cui_push_disabled(cui_ctx *ui, bool disabled);
 CUI_API void cui_pop_disabled(cui_ctx *ui);
+/* Restrict Tab / Shift+Tab navigation to widgets built inside the active scope
+ * (for example, the focused pane in a multi-pane workspace). An inactive scope
+ * and its descendants remain clickable but outside the Tab order. With no active
+ * scope, Tab visits unscoped controls. An open modal takes precedence. */
+CUI_API void cui_push_focus_scope(cui_ctx *ui, cui_id id, bool active);
+CUI_API void cui_pop_focus_scope(cui_ctx *ui);
 
 /* ------------------------------------------------------------------------ */
 /* Text                                                                     */
@@ -1101,6 +1158,9 @@ CUI_API int cui_pattern_meter_ex(cui_ctx *ui, const char *id, const cui_meter_pa
 
 /* Images */
 CUI_API cui_texture cui_image_create(cui_ctx *ui, int w, int h, const void *rgba);
+/* Update a rectangle within an existing RGBA8 texture and request a redraw. stride is
+ * the byte distance between source rows: at least w * 4, or 0 for tightly packed. */
+CUI_API void cui_image_update(cui_ctx *ui, cui_texture tex, int x, int y, int w, int h, const void *rgba, int stride);
 CUI_API cui_texture cui_image_load(cui_ctx *ui, const char *path, int *w, int *h);   /* UTF-8 path, PNG/JPEG via stb_image */
 CUI_API void cui_image_destroy(cui_ctx *ui, cui_texture tex);
 typedef struct cui_image_opts {
@@ -1524,9 +1584,11 @@ CUI_API void cui_path_bar_menu_end(cui_ctx *ui);
  * system's own). The browser lists a folder (name,
  * date modified and size; folders first, any column sorts), with back,
  * forward and up, a path bar you can type into, a filter field and a
- * sidebar of places. Double-click or Enter opens a folder or picks a file;
- * Backspace goes up, Alt+Left and Alt+Right go back and forward, F5
- * reloads, and typing a letter jumps to the next name that starts with it.
+ * scrollable sidebar of places and native drives/volumes; the default sidebar
+ * highlights only the most specific enclosing place or volume. Double-click or
+ * Enter opens a folder or picks a file; Backspace goes up, Alt+Left and
+ * Alt+Right go back and forward, F5 reloads the folder and native sidebar,
+ * and typing a letter jumps to the next name that starts with it.
  * A folder is read when you enter it (or reload), not every frame, and only
  * the rows in view are built.
  *
@@ -1556,8 +1618,8 @@ typedef struct cui_file_browser_opts {
     bool folders_only;         /* lists folders and leaves the files out */
     bool hidden;               /* show hidden files */
     bool no_places;            /* the sidebar of places */
-    const char *const *places; /* full paths for the sidebar, each shown by its last part; at most 6 */
-    int place_count;           /* entries in `places`; with `places` NULL the sidebar shows home, desktop, documents, downloads and the root */
+    const char *const *places; /* full paths for the scrollable sidebar, each shown by its last part */
+    int place_count;           /* entries in `places`; when places is NULL: home, desktop, documents, downloads and native drives/mounts */
     cui_file_list_fn list;     /* function that lists a folder; set it to browse something other than the local disk */
     void *list_user;           /* passed to `list` as its first argument; `list` defaults to cui_fs_list, the local disk */
     int max_entries;           /* default 20,000 */
@@ -2708,7 +2770,10 @@ typedef struct cui_week_opts {
     cui_size height;
     bool read_only;
 } cui_week_opts;
-/* Returns the activated event index or -1. Read-only events still activate. */
+/* Returns the activated event index or -1. Read-only events still activate.
+ * Pointer activation requires staying within the drag threshold through release.
+ * A drag ends when the event list shrinks, the calendar is disabled or
+ * `read_only` changes; moving the event again takes a new press. */
 CUI_API int cui_week_calendar_ex(cui_ctx *ui, const char *id, cui_date week_start, cui_cal_event *events, int count, const cui_week_opts *opts);
 
 /* Month calendar: a month grid with events. All-day and multi-day events
@@ -2780,7 +2845,9 @@ typedef struct cui_gantt_opts {
     int today;                 /* day to mark as today, counted from `origin`, with an accent line and a "Today" chip; 0 marks none */
     bool read_only;
 } cui_gantt_opts;
-/* Returns the activated task index or -1. Read-only tasks still activate. */
+/* Returns the activated task index or -1. Read-only tasks still activate.
+ * A drag ends when the task list shrinks, the chart is disabled or
+ * `read_only` changes; moving the bar again takes a new press. */
 CUI_API int cui_gantt_ex(cui_ctx *ui, const char *id, cui_gantt_task *tasks, int count, cui_date origin, int days, const cui_gantt_opts *opts);
 
 /* ------------------------------------------------------------------------ */
@@ -4419,7 +4486,15 @@ CUI_API cui_waterfall_result cui_waterfall_ex(cui_ctx *ui, const char *id, const
  * name folds it. Keys: Left and Right step through the selected span's lane,
  * + and - zoom, F fits, Esc clears. Spans must be sorted by track, depth and
  * start (cui_trace_sort), with no overlap within a depth of a track. Like the
- * flame graph, only what is in view is visited. */
+ * flame graph, only what is in view is visited.
+ *
+ * Links draw dependencies between spans (a request and the work it caused, a
+ * message and the turn it woke): a curve from the end of one span to the start
+ * of another, with an arrowhead, across lanes. A link is drawn when the time
+ * range it covers meets the view; an end off screen runs to the edge. A folded
+ * lane's links meet its top row. Links touching the selected or hovered span,
+ * and the link under the pointer (hovered_link), are drawn bright; the rest
+ * subdued. cui_trace_span_rect says where a span was drawn, for overlays. */
 typedef struct cui_trace_track {
     const char *name;          /* the lane's name, in the column on the left */
     bool collapsed;            /* the lane shows only its top row; a click on its name toggles this */
@@ -4433,6 +4508,12 @@ typedef struct cui_trace_span {
     uint32_t color_key;        /* picks the color; 0: hashed from the name */
 } cui_trace_span;
 typedef struct cui_trace_marker { const char *name; double time; cui_tone tone; } cui_trace_marker;
+typedef struct cui_trace_link {
+    int from, to;              /* indices into the spans: from the end of `from` to the start of `to` */
+    cui_tone tone;             /* the curve's color; CUI_TONE_NEUTRAL (0): the emphasis color */
+    float width;               /* line width in points; 0: 1.25 */
+    bool dashed;               /* a weaker or inferred dependency */
+} cui_trace_link;
 typedef struct cui_trace_view {
     double start, end;               /* visible time range; end <= start fits everything */
     float scroll;                    /* points scrolled down */
@@ -4445,15 +4526,27 @@ typedef struct cui_trace_opts {
     float row_height;                /* default 20 */
     const cui_trace_marker *markers; /* moments drawn as lines across every lane, named in a strip under the ruler */
     int marker_count;                /* number of `markers` */
+    const cui_trace_link *links;     /* dependencies drawn as curves between spans */
+    int link_count;                  /* number of `links` */
 } cui_trace_opts;
 typedef struct cui_trace_result {
     bool selection_changed;    /* `*selected` changed this frame (click or keys) */
     bool view_changed;         /* time range, scroll position, or measurement in `*view` changed */
     int hovered;               /* span under the pointer, or -1 */
+    int hovered_link;          /* link under the pointer (when no span is), or -1 */
 } cui_trace_result;
 CUI_API cui_trace_result cui_trace_view_ex(cui_ctx *ui, const char *id, cui_trace_track *tracks, int track_count,
                                            const cui_trace_span *spans, int span_count, cui_trace_view *view, int *selected, const cui_trace_opts *opts);
 CUI_API void cui_trace_sort(cui_trace_span *spans, int count);
+/* Where a span is drawn, in points (zero size when out of view or in a folded
+ * lane below its top row): its time extent and row, as cui_flame_span_rect
+ * gives one; the bar inside is a point narrower, the gap between neighbours,
+ * and a selected sliver is widened to 3 points. trace is the view's id:
+ * cui_last_id(ui) right after the call. Asked right after the call, it
+ * answers at this frame's view in the rectangle of the previous frame, as
+ * this frame is not laid out yet; after cui_end_frame, where this frame drew
+ * it, until the next frame begins. */
+CUI_API cui_rect cui_trace_span_rect(cui_ctx *ui, cui_id trace, const cui_trace_span *span);
 
 /* ---- Regular expressions and the regex tester ---- */
 
@@ -4718,6 +4811,22 @@ typedef enum cui_axis_units {
     CUI_AXIS_HOURS             /* hours shown as a time of day: 12.25 is 12:15, and 30 is 06:00 the next day */
 } cui_axis_units;
 
+/* Writes the label for `value` into `out`, for an axis or a readout that a format string
+ * cannot describe: month names, dates, a locale's decimal comma. At most `capacity` bytes,
+ * the terminating zero included (`capacity` is at least 64); longer text is cut. Called while
+ * the frame ends, so `user` must stay valid until cui_end_frame. A value from the axis can
+ * carry rounding error from the label step: round it before using it as an index.
+ *
+ *     static void month_name(void *user, double value, char *out, size_t capacity) {
+ *         static const char *const names[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+ *                                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+ *         long m = lround(value);
+ *         (void)user;
+ *         snprintf(out, capacity, "%s", m >= 1 && m <= 12 ? names[m - 1] : "");
+ *     }
+ */
+typedef void (*cui_axis_label_fn)(void *user, double value, char *out, size_t capacity);
+
 /* Dot-matrix chart: values drawn as a grid of dots, lit up to each column's value and dim
  * above it. Several series stack, each in its own band, and an `accent` series is drawn in
  * the accent color: the item being edited, or the part that matters. The pointer, or the
@@ -4755,6 +4864,10 @@ typedef struct cui_dot_chart_opts {
     bool no_readout;           /* no value label under the pointer */
     const cui_chart_annotation *annotations;   /* lines and points drawn over the dots */
     int annotation_count;      /* number of `annotations` */
+    cui_axis_label_fn x_label; /* writes the x labels and the readout's x in place of x_units and x_format; x_units still picks the spacing */
+    void *x_label_user;        /* passed to `x_label` as its first argument */
+    cui_axis_label_fn value_label;   /* writes the readout's value in place of `format`; `unit` still follows it */
+    void *value_label_user;    /* passed to `value_label` as its first argument */
 } cui_dot_chart_opts;
 
 typedef struct cui_dot_chart_result {
@@ -4788,6 +4901,8 @@ typedef struct cui_event_track_opts {
     bool no_add;               /* clicks and Enter do not add events */
     bool no_remove;            /* double-clicks and Delete do not remove events */
     bool no_axis;              /* hides the axis labels under the dots */
+    cui_axis_label_fn label;   /* writes the axis labels and the selected event's time in place of units and format; units still picks the spacing */
+    void *label_user;          /* passed to `label` as its first argument */
 } cui_event_track_opts;
 
 typedef struct cui_event_track_result {
@@ -5041,10 +5156,58 @@ CUI_API void cui_push_clip(cui_ctx *ui, cui_rect r);
 CUI_API void cui_pop_clip(cui_ctx *ui);
 
 /* Canvas: a box of the given size that you paint yourself. The callback
- * runs after layout, with the final rectangle. Returns interaction info. */
+ * runs after layout (during cui_end_frame), with the final rectangle; inside
+ * a disabled scope (cui_push_disabled) it sees cui_is_disabled return true.
+ * `user` is shallow-copied into frame memory (`user_size` bytes); any pointer
+ * fields inside `user` must stay valid until cui_end_frame — use
+ * cui_frame_alloc / cui_frame_strdup for temporary strings or slices.
+ * Returns interaction info. */
 typedef void (*cui_paint_fn)(cui_ctx *ui, cui_rect rect, void *user);
 typedef struct cui_canvas_result { cui_rect rect; bool hovered, pressed, clicked; cui_vec2 mouse; } cui_canvas_result;
 CUI_API cui_canvas_result cui_canvas(cui_ctx *ui, const char *id, cui_size width, cui_size height, cui_paint_fn paint, const void *user, size_t user_size);
+/* A zeroed options struct gives the same behavior as cui_canvas. */
+typedef struct cui_canvas_opts {
+    bool focusable;       /* Tab stop; with keyboard focus Enter or Space clicks it */
+    bool component_input; /* requires focusable; the host routes keys instead of button activation */
+} cui_canvas_opts;
+CUI_API cui_canvas_result cui_canvas_ex(cui_ctx *ui, const char *id, cui_size width, cui_size height, cui_paint_fn paint, const void *user, size_t user_size, const cui_canvas_opts *opts);
+/* Request focus for a submitted canvas with component_input enabled. The last
+ * request wins at end_frame and expires there. An absent, disabled, or
+ * nonparticipating target leaves the current focus unchanged. Removal revokes
+ * participating focus; built-in forward-focus behavior is unchanged. */
+CUI_API void cui_request_component_focus(cui_ctx *ui, cui_id id);
+/* Test eligibility from a completed submission: call after end_frame or before
+ * submitting components in the next frame. Includes window, modal and popup
+ * exclusion. Unsubmitted host visibility/disabled changes remain host-owned. */
+CUI_API bool cui_component_has_input(cui_ctx *ui, cui_id id);
+/* Current owner, including built-ins. Ownership alone does not imply eligibility. */
+CUI_API cui_id cui_focused_id(cui_ctx *ui);
+CUI_API bool cui_window_focused(cui_ctx *ui);
+
+/* Whether `id` has keyboard focus with its ring showing; for a painter. */
+CUI_API bool cui_focus_visible(cui_ctx *ui, cui_id id);
+
+/* Frame-scoped arena allocation: zero-initialized memory valid until the next
+ * cui_begin_frame. Useful for passing temporary strings or slices into a
+ * deferred cui_canvas paint callback without heap churn. Returns NULL for a
+ * null context, zero size, or a size the frame arena cannot represent. */
+CUI_API void *cui_frame_alloc(cui_ctx *ui, size_t size);
+CUI_API char *cui_frame_strdup(cui_ctx *ui, const char *s);
+
+/* Marks the part of a canvas that takes the wheel, for a canvas that zooms,
+ * pans or scrolls what it draws the way the built-in charts, graphs and
+ * timelines do. Call it from the paint callback; over the rectangle the wheel
+ * stops there instead of scrolling an enclosing scroll area or the page. Give
+ * it an id of its own, not the canvas's: the region keeps scroll state under
+ * that id. A canvas in a disabled scope marks nothing, so the wheel scrolls
+ * the page there. Like every hit area, the region is the one painted on the
+ * previous frame. */
+CUI_API void cui_wheel_region(cui_ctx *ui, cui_id id, cui_rect rect);
+/* Returns the wheel aimed at a cui_wheel_region id this frame, in lines with
+ * +y up as cui_input_scroll gives it, and consumes it, so call it once per
+ * frame. Returns false and leaves *delta alone when no wheel came, and in a
+ * disabled scope: call it in the scope the canvas was built in. */
+CUI_API bool cui_wheel_take(cui_ctx *ui, cui_id id, cui_vec2 *delta);
 
 /* Persistent per-id storage for your own components (zeroed on first use).
  * State not used for about 300 frames is freed (and zeroed again if it comes
@@ -5123,6 +5286,7 @@ CUI_API const cui_draw_data *cui_get_draw_data(cui_ctx *ui);
 #define cui_split(ui, id, ratio, ...) CUI__SCOPE(cui_split_begin((ui), (id), (ratio), CUI__OPTS(cui_split_opts, __VA_ARGS__)), cui_split_end(ui))
 #define cui_id_scope(ui, str)   CUI__SCOPE(cui_push_id((ui), (str)), cui_pop_id(ui))
 #define cui_disabled_scope(ui, d) CUI__SCOPE(cui_push_disabled((ui), (d)), cui_pop_disabled(ui))
+#define cui_focus_scope(ui, id, active) CUI__SCOPE(cui_push_focus_scope((ui), (id), (active)), cui_pop_focus_scope(ui))
 
 #define cui_text(ui, text, ...)             cui_text_ex((ui), (text), CUI__OPTS(cui_text_opts, __VA_ARGS__))
 #define cui_button(ui, label, ...)          cui_button_ex((ui), (label), CUI__OPTS(cui_button_opts, __VA_ARGS__))
