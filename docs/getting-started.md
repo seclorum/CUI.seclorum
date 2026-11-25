@@ -96,7 +96,7 @@ The window layer for your system is picked by the preprocessor. Before the imple
 
 | CMake option | Default | Meaning |
 |---|---|---|
-| `CUI_PLATFORM` | `auto` | `win32`, `cocoa`, `x11`, `sdl2` or `glfw`. One backend per build; `auto` is `x11` on Linux ([Platforms](platform.md)) |
+| `CUI_PLATFORM` | `auto` | `win32`, `cocoa`, `x11`, `wayland`, `sdl2` or `glfw`. One backend per build; `auto` is `x11` on Linux ([Platforms](platform.md)) |
 | `CUI_D3D12`, `CUI_VULKAN`, `CUI_METAL` | `OFF` | The platform's GPU renderer (`cui_gpu_*`): Direct3D 12 on Windows, Vulkan on Linux, Metal on macOS. Each configures on its own platform only. OpenGL and the software renderer are always built |
 | `CUI_WITH_APP` | `ON` | Build the window layer. Turn off to use only the core in your engine |
 | `CUI_DEFAULT_FONTS` | `ON` | Embed Inter, Geist and Lucide (about 180 KB) |
@@ -240,6 +240,8 @@ cui_app_open_url("https://example.com");
 
 Native dialogs on Windows and macOS; on Linux `zenity` or `kdialog` when installed. Kinds: `CUI_FILE_OPEN`, `CUI_FILE_SAVE`, `CUI_FILE_FOLDER`. Inside a `cui_app_run` callback, pass `NULL` for the app.
 
+On Windows, a save dialog accepts a full path in `default_name` to suggest both the directory and the file name. The dialog returns the selected path. The caller creates the file.
+
 ## 8. Screenshots and tests
 
 Any CUI app can save a screenshot and exit, which is handy for docs and visual tests:
@@ -295,7 +297,7 @@ Android and iOS are not supported yet. Each needs its own platform layer (an `an
 |---|---|
 | CMake says `Could NOT find X11` | Install the X11 headers: `libx11-dev` (Debian, Ubuntu), `libX11-devel` (Fedora), `libx11` (Arch) |
 | `undefined reference to XOpenDisplay` (building without CMake) | Put `-lX11 -ldl -lm -lpthread` after the source files on the command line |
-| No window on Wayland without XWayland | Configure with `-DCUI_PLATFORM=sdl2` or `-DCUI_PLATFORM=glfw` (install `libsdl2-dev` or `libglfw3-dev`) |
+| No window on Wayland without XWayland | Configure with `-DCUI_PLATFORM=wayland` (SDL2 2.0.22+) or `-DCUI_PLATFORM=glfw` (install `libsdl2-dev` or `libglfw3-dev`) |
 | Black or empty window, OpenGL errors (virtual machines, remote desktop, old drivers) | CUI falls back to its software renderer when OpenGL 3.3 cannot start; to force it, run with `CUI_RENDERER=software` |
 | Everything looks too small or too large | Run with `CUI_SCALE=1.5` (or any scale) to override what the display reports |
 | A console window opens next to the app (Windows) | Call `cui_app_target(my_app)` in your `CMakeLists.txt`. Without CMake: `-mwindows` (MinGW), or `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` (MSVC) |

@@ -26,6 +26,7 @@ struct cui_app {
     double pace_start;         /* vsync check: start of the current run of animation frames */
     int pace_frames, pace_fast;
     bool vsync_off;            /* vsync was asked for, but the swap does not wait: pace by the clock */
+    bool present_fast;         /* the backend presents without vsync for a window transition: pace by the clock */
     void (*frame_cb)(cui_ctx *ui, void *user);
     void *frame_user;
     bool in_live_resize;

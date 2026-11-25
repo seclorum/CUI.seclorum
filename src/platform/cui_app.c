@@ -302,7 +302,7 @@ bool cui_app_frame(cui_app *app) {
             app->hz = hz >= 24 && hz <= 1000 ? hz : 60;
             app->hz_checked = now;
         }
-        if ((app->gl || app->gpu) && !app->desc.no_vsync && !app->vsync_off) {
+        if ((app->gl || app->gpu) && !app->desc.no_vsync && !app->vsync_off && !app->present_fast) {
             /* two runs of 20 frames in a row faster than the display: the swap does not wait
              * (one is not enough: after a pause a driver may queue a few frames without waiting) */
             if (app->pace_frames++ == 0) app->pace_start = app->last_present;
@@ -313,7 +313,7 @@ bool cui_app_frame(cui_app *app) {
                 app->pace_frames = 0;
             }
         }
-        if ((!app->gl && !app->gpu) || app->desc.no_vsync || app->vsync_off) {
+        if ((!app->gl && !app->gpu) || app->desc.no_vsync || app->vsync_off || app->present_fast) {
             /* one frame per period, counted from when the last one began; events that come
              * in the meantime are taken in but do not start the frame early */
             double until = app->last_time + 1.0 / (app->desc.no_vsync && app->hz < 120 ? 120 : app->hz);

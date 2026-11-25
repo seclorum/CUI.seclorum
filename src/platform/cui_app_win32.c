@@ -49,6 +49,9 @@ typedef struct {
     HCURSOR cursors[CUI_CURSOR_COUNT];
     cui_cursor cursor;
     bool in_size_move;
+    double transition_until;   /* a DWM maximize, minimize or restore animation runs until then */
+    bool swap_fast, vsync;     /* the swap interval is 0 for that animation; vsync as the app asked */
+    PFN_wglSwapIntervalEXT set_swap_interval;
     BITMAPINFO bmi;
     HANDLE timer;          /* timed waits: high resolution where Windows has it (10 1803 and later) */
 } cui__win32;
@@ -272,6 +275,17 @@ static void cui__win32_text_input_rect(void *user, cui_rect caret) {
     cui__win32_place_ime(w);
 }
 
+/* Maximize, minimize and restore play a DWM animation that holds the swap chain: a vsync swap
+ * inside it blocks the message loop for the whole animation, about a second. Present without
+ * vsync while it runs, so frames keep coming and DWM animates the latest one; the first swap
+ * after it puts vsync back (cui__plat_gl_swap). Reported in issue 117. */
+static void cui__win32_transition(cui_app *app) {
+    cui__win32 *w = cui__w(app);
+    if (!w || !w->vsync || !w->set_swap_interval) return;
+    w->transition_until = cui__plat_now() + 0.32;
+    if (!w->swap_fast) { w->set_swap_interval(0); w->swap_fast = true; app->present_fast = true; }
+}
+
 static LRESULT CALLBACK cui__win32_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     cui_app *app = (cui_app *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     if (!app) {
@@ -297,6 +311,11 @@ static LRESULT CALLBACK cui__win32_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         }
         return 0;
     case WM_ENTERSIZEMOVE: if (w) w->in_size_move = true; return 0;
+    case WM_SYSCOMMAND: {   /* the title bar's buttons and double-click, the taskbar */
+        UINT cmd = (UINT)wp & 0xFFF0;
+        if (cmd == SC_MAXIMIZE || cmd == SC_MINIMIZE || cmd == SC_RESTORE) cui__win32_transition(app);
+        break;   /* DefWindowProc runs the command */
+    }
     case WM_EXITSIZEMOVE: if (w) w->in_size_move = false; return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -565,10 +584,21 @@ bool cui__plat_gl_create(cui_app *app, bool vsync) {
     w->glrc = ctx;
     PFN_wglSwapIntervalEXT swap = (PFN_wglSwapIntervalEXT)(void *)wglGetProcAddress("wglSwapIntervalEXT");
     if (swap) swap(vsync ? 1 : 0);
+    w->set_swap_interval = swap;
+    w->vsync = vsync;
     return true;
 }
 
-void cui__plat_gl_swap(cui_app *app) { SwapBuffers(cui__w(app)->hdc); }
+void cui__plat_gl_swap(cui_app *app) {
+    cui__win32 *w = cui__w(app);
+    if (w->swap_fast && cui__plat_now() >= w->transition_until) {   /* the window animation is over */
+        w->set_swap_interval(1);
+        w->swap_fast = false;
+        app->present_fast = false;
+        cui_request_redraw(app->ui);
+    }
+    SwapBuffers(w->hdc);
+}
 
 void cui__plat_present(cui_app *app, const void *bgra, int width, int height, int stride) {
     cui__win32 *w = cui__w(app);
@@ -649,11 +679,11 @@ void cui__plat_gl_release(cui_app *app) {
 
 void cui__plat_maximize(cui_app *app) {
     cui__win32 *w = cui__w(app);
-    if (w && w->hwnd) ShowWindow(w->hwnd, SW_SHOWMAXIMIZED);
+    if (w && w->hwnd) { cui__win32_transition(app); ShowWindow(w->hwnd, SW_SHOWMAXIMIZED); }
 }
 
-void cui__plat_minimize(cui_app *app) { ShowWindow(cui__w(app)->hwnd, SW_MINIMIZE); }
-void cui__plat_restore(cui_app *app) { ShowWindow(cui__w(app)->hwnd, SW_RESTORE); }
+void cui__plat_minimize(cui_app *app) { cui__win32_transition(app); ShowWindow(cui__w(app)->hwnd, SW_MINIMIZE); }
+void cui__plat_restore(cui_app *app) { cui__win32_transition(app); ShowWindow(cui__w(app)->hwnd, SW_RESTORE); }
 
 cui_window_state cui__plat_window_state(cui_app *app) {
     HWND hwnd = cui__w(app)->hwnd;
